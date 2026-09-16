@@ -21,6 +21,8 @@
     "test:runtime": "node --import tsx scripts/testing/smoke-runtime.ts",
     "test:portals": "node --import tsx --test tests/portals.test.ts",
     "test:play": "node --import tsx --test tests/play.test.ts tests/play-provider.test.ts tests/play-gateway.test.ts",
+    "test:play:style": "node --import tsx scripts/testing/evaluate-play-style.ts",
+    "preview:play": "node --import tsx scripts/testing/preview-play.ts",
     "test:portals:http": "node --import tsx scripts/testing/smoke-portals.ts",
     "test:all": "node --import tsx --test tests/*.test.ts",
     "verify:production": "node --import tsx scripts/testing/verify-production.ts",

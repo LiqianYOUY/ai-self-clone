@@ -11,6 +11,27 @@ export interface PlayPersonaInput {
   style: string;
   memories: string;
   examplesText: string;
+  /** Label used for the host in pasted examples; omitted for legacy profiles. */
+  exampleSpeaker?: string;
+}
+
+/** Host-only evidence summary. Never include this in a friend's room DTO. */
+export interface PlayStyleSummary {
+  version: string;
+  sourceHash: string;
+  targetSpeaker: string;
+  sampleCount: number;
+  pairedExampleCount: number;
+  status: "needs_examples" | "limited" | "ready";
+  medianLength: number;
+  p90Length: number;
+  emojiRate: number;
+  questionRate: number;
+  exclamationRate: number;
+  finalPunctuationRate: number;
+  actionRate: number;
+  commonPhrases: string[];
+  warnings: string[];
 }
 
 export interface PlayMessageDto {
@@ -56,6 +77,7 @@ export interface PlayStats {
 export interface PlayHomeDto {
   actor: { id: string; pseudonym: string } | null;
   persona: PlayPersonaInput | null;
+  styleSummary?: PlayStyleSummary | null;
   providerReady: boolean;
   providerStatus?: PlayProviderStatus;
   online: boolean;

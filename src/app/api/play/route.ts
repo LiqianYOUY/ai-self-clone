@@ -32,6 +32,8 @@ import {
   leavePlayRoom,
   playMessageSchema,
   playPersonaSchema,
+  playPreviewSchema,
+  previewPlayPersona,
   replyPlayRoom,
   runPendingPlayReply,
   savePlayPersona,
@@ -67,6 +69,12 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("delete_data"), payload: roomPayload }).strict(),
   z
     .object({ action: z.literal("save_persona"), payload: playPersonaSchema })
+    .strict(),
+  z
+    .object({
+      action: z.literal("preview_persona"),
+      payload: playPreviewSchema,
+    })
     .strict(),
   z
     .object({
@@ -135,6 +143,9 @@ const errors: Record<string, string> = {
   PROVIDER_NOT_CONFIGURED: "请先完成模型配置，再创建邀请。",
   PROVIDER_UNAVAILABLE: "模型暂时不可用，请检查本地模型服务后重试。",
   PERSONA_REQUIRED: "请先保存你的分身资料。",
+  PERSONA_EXAMPLES_REQUIRED:
+    "还没有识别到你的发言。请标明示例中你的称呼，或使用「朋友：… / 我：…」格式后保存。",
+  STYLE_REPLY_FAILED: "这次回复没有符合你的表达习惯，请重试或补充示例。",
   HOST_OFFLINE: "请先开启在线接待。",
   ROOM_EXISTS: "请先结束或取消当前这局聊天。",
   IDEMPOTENCY_CONFLICT: "这次操作已提交，内容不能再次改变。",
@@ -279,6 +290,9 @@ export async function POST(request: Request): Promise<Response> {
         );
       case "save_persona":
         return jsonResponse(await savePlayPersona(actor, body.payload));
+      case "preview_persona":
+        enforceRateLimit(`play-preview:${actor.id}`, 10);
+        return jsonResponse(await previewPlayPersona(actor, body.payload));
       case "create_room":
         return jsonResponse(await createPlayRoom(actor));
       case "reply":

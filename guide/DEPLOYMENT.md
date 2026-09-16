@@ -56,6 +56,8 @@ sudo systemctl restart ai-self-clone
 
 更新时先停止自己的服务，更新代码和依赖、测试并构建，再重启。`npm run clean` 只在服务和测试停止时运行；它会删除生产构建，需要重新构建后启动。清理不删除 `.local/postgres`、数据库密码、模型或 Tailscale 状态；应用数据删除需使用专门的删除流程。
 
+风格提炼更新包含 migration `202609160002_play_style_distillation`，新增示例称呼与风格档案字段。部署前运行 `npm run db:migrate`、重新构建并重启；项目 `start:local` 也会部署迁移。旧资料在读取时兼容提炼，重新保存后持久化，建议主持人核对识别对象并试聊。GitHub 代码推送本身不会更新正在运行的树莓派服务。
+
 ### 可选临时备用：Cloudflare Quick Tunnel
 
 此备用方案**尚未启用**。官方 `cloudflared` 程序已下载并校验；启用前需确认允许昵称、聊天等网页请求经过 Cloudflare，并在参与说明中明确网络服务商的数据处理。确认后，由项目所有者从项目根目录执行：

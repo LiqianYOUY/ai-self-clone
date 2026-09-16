@@ -5,7 +5,9 @@ import {
   generatePlayReply,
   isPlayProviderConfigured,
   PlayProviderError,
+  playGenerationPolicy,
 } from "../src/server/play-provider";
+import { distillPlayStyle } from "../src/server/play-style";
 
 const originalFetch = globalThis.fetch;
 const oldEnv = {
@@ -96,14 +98,15 @@ test("provider sends ordered role messages and returns only trimmed reply text",
     assert.equal(body.stream, false);
     assert.equal(body.model, "private-model");
     assert.equal(body.max_tokens, 512);
-    assert(body.messages[0].content.includes("最多 120 个字"));
+    assert(body.messages[0].content.includes("本轮最多 24 个字符"));
     assert.deepEqual(body.messages.slice(1), [
       { role: "user", content: "去吃饭吗" },
       { role: "assistant", content: "去哪" },
       { role: "user", content: "老地方" },
     ]);
     assert(body.messages[0].content.includes(context.persona.style));
-    assert(body.messages[0].content.includes(context.persona.examplesText));
+    assert(body.messages[0].content.includes("改天约呗"));
+    assert(!body.messages[0].content.includes('"examplesText"'));
     return completion({
       content: "  行啊，几点  ",
       reasoning_content: "private provider analysis",
@@ -331,7 +334,8 @@ test("a truncated response is discarded and retried once with a shorter prompt a
       );
       assert.equal(body.messages.length, context.messages.length + 1);
       assert(!JSON.stringify(body.messages).includes("不完整的消息"));
-      if (calls === 2) assert(body.messages[0].content.includes("60 个字以内"));
+      if (calls === 2)
+        assert(body.messages[0].content.includes("24 个字符以内"));
       const content = calls === 1 ? "不完整的消息" : "好，老时间见";
       const finish_reason = calls === 1 ? "length" : "stop";
       return provider === "ollama"
@@ -396,6 +400,125 @@ test("permanent HTTP errors and unsafe completions do not retry", async () => {
     await assert.rejects(generatePlayReply(context), PlayProviderError);
     assert.equal(calls, 1);
   }
+});
+
+test("style violations are rewritten once without adding the rejected text to conversation history", async () => {
+  for (const rejected of [
+    "很长的寒暄".repeat(10),
+    "来了🤩",
+    "（歪头笑）你好",
+    "作为一个AI，我可以陪你聊天",
+  ]) {
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(
+        body.messages.slice(1),
+        context.messages.map((message) => ({
+          role: message.speaker === "FRIEND" ? "user" : "assistant",
+          content: message.text,
+        })),
+      );
+      if (calls === 2) {
+        assert.match(body.messages[0].content, /重新生成要求/);
+        assert(!body.messages[0].content.includes(rejected));
+      }
+      return completion({ content: calls === 1 ? rejected : "走呗" });
+    };
+    assert.equal(await generatePlayReply(context), "走呗");
+    assert.equal(calls, 2);
+  }
+});
+
+test("repeated style failures never leak an invalid reply or get unlimited retries", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return completion({ content: "来了🤩" });
+  };
+  await assert.rejects(
+    generatePlayReply(context),
+    (error: unknown) =>
+      error instanceof PlayProviderError && error.code === "INVALID_REPLY",
+  );
+  assert.equal(calls, 2);
+});
+
+test("longer or expressive speaker evidence is respected instead of enforcing one universal short style", async () => {
+  const expressive = {
+    ...context,
+    persona: {
+      ...context.persona,
+      examplesText:
+        "朋友：周末怎么安排？\n我：我想先去河边走走，晚点找家小店吃饭，再回家看电影，感觉这样就很舒服哈哈😊\n朋友：你今天心情怎么样？\n我：今天挺好的呀，忙完以后终于有时间做点自己喜欢的事，准备好好放松一下😊",
+    },
+  };
+  let calls = 0;
+  globalThis.fetch = async (_input, init) => {
+    calls++;
+    const system = JSON.parse(String(init?.body)).messages[0].content;
+    assert(!system.includes("示例无表情图标"));
+    assert(system.includes("表达示例仅教你怎么说"));
+    return completion({
+      content: "好呀，我觉得可以慢慢走过去，时间还早，到了再决定吃什么就好😊",
+    });
+  };
+  assert((await generatePlayReply(expressive)).endsWith("😊"));
+  assert.equal(calls, 1);
+});
+
+test("ambiguous target examples fail before inference rather than imitating the other speaker", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return completion({ content: "错误" });
+  };
+  await assert.rejects(
+    generatePlayReply({
+      ...context,
+      persona: {
+        ...context.persona,
+        exampleSpeaker: "老王",
+        examplesText: "甲：你好\n乙：你也好",
+      },
+    }),
+    PlayProviderError,
+  );
+  assert.equal(calls, 0);
+});
+
+test("frozen games reject model or distillation version drift before inference", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return completion({ content: "行" });
+  };
+  const profile = distillPlayStyle(context.persona);
+  for (const frozen of [
+    { styleProfile: { ...profile, version: "old-unsupported-style" } },
+    { styleProfile: { ...profile, sourceHash: "wrong-persona" } },
+    { generationPolicy: { ...playGenerationPolicy(), model: "another-model" } },
+    {
+      generationPolicy: {
+        ...playGenerationPolicy(),
+        promptVersion: "old-prompt",
+      },
+    },
+  ])
+    await assert.rejects(
+      generatePlayReply({ ...context, ...frozen }),
+      PlayProviderError,
+    );
+  assert.equal(calls, 0);
+  assert.equal(
+    await generatePlayReply({
+      ...context,
+      styleProfile: profile,
+      generationPolicy: playGenerationPolicy(),
+    }),
+    "行",
+  );
 });
 
 test("external abort before a request or during retry delay prevents further provider calls", async () => {

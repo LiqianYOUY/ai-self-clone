@@ -763,6 +763,120 @@
 .play-example-input {
   font-size: 12px !important;
 }
+.play-style-evidence,
+.play-persona-preview {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--play-line);
+}
+.play-style-heading,
+.play-preview-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.play-style-heading h3 {
+  font-size: 16px;
+}
+.play-style-evidence > .play-caption,
+.play-persona-preview > .play-caption,
+.play-preview-correction > .play-caption {
+  margin-top: 9px;
+  font-size: 12px;
+}
+.play-style-unsaved {
+  margin-top: 12px !important;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f2eedf;
+  color: #716244;
+  font-size: 12px;
+}
+.play-style-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+.play-style-metrics > div {
+  min-width: 0;
+  padding: 11px 10px;
+  border-radius: 9px;
+  background: var(--play-sage);
+}
+.play-style-metrics dt {
+  color: #5d6e5c;
+  font-size: 11px;
+}
+.play-style-metrics dd {
+  margin: 4px 0 0;
+  font-size: 21px;
+  font-variant-numeric: tabular-nums;
+}
+.play-style-metrics dd small {
+  font-size: 10px;
+}
+.play-style-phrases {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 12px;
+}
+.play-style-phrases b {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border: 1px solid var(--play-line);
+  border-radius: 5px;
+}
+.play-style-warnings {
+  margin: 12px 0;
+  padding-left: 19px;
+  font-size: 12px;
+  color: #716244;
+}
+.play-style-warnings li + li {
+  margin-top: 6px;
+}
+.play-preview-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 14px;
+  margin-top: 16px;
+  background: var(--play-paper);
+  border: 1px solid var(--play-line);
+  border-radius: 10px;
+}
+.play-preview-form,
+.play-preview-correction {
+  margin-top: 18px;
+}
+.play-preview-form label,
+.play-preview-correction label {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+}
+.play-preview-footer {
+  margin-top: 10px;
+}
+.play-preview-footer .play-button {
+  padding: 9px 14px;
+}
+.play-preview-correction > button {
+  margin-top: 10px;
+}
+.play-persona-preview > .play-notice {
+  margin-top: 12px;
+}
 .play-form-footer {
   display: flex;
   align-items: center;

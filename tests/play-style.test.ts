@@ -1,0 +1,343 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { PlayPersonaInput } from "../src/domain/play";
+import {
+  distillPlayStyle,
+  graphemeLength,
+  PLAY_STYLE_VERSION,
+  resolvePlayStyle,
+  selectStyleExamples,
+  styleSourceHash,
+  summarizePlayStyle,
+} from "../src/server/play-style";
+
+function persona(
+  examplesText: string,
+  extra: Partial<PlayPersonaInput> = {},
+): PlayPersonaInput {
+  return {
+    displayName: "老王",
+    bio: "喜欢骑车",
+    memories: "朋友去过上海",
+    style: "自然地聊天",
+    examplesText,
+    ...extra,
+  };
+}
+
+test("distillation learns only the host, with authentic preceding friend context", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "朋友：今天写了很多代码🤩！（歪头笑）\n我：累不累\n我：歇会呗\n朋友：挺累的\n本人：哈哈\n对方：笑啥\nself: 哈哈",
+    ),
+  );
+  assert.deepEqual(
+    profile.samples.map(({ text, prompt }) => ({ text, prompt })),
+    [
+      { text: "累不累", prompt: "今天写了很多代码🤩！（歪头笑）" },
+      { text: "歇会呗", prompt: undefined },
+      { text: "哈哈", prompt: "挺累的" },
+      { text: "哈哈", prompt: "笑啥" },
+    ],
+  );
+  assert.equal(profile.metrics.emojiRate, 0);
+  assert.equal(profile.metrics.exclamationRate, 0);
+  assert.equal(profile.metrics.actionRate, 0);
+  assert.deepEqual(
+    profile.recurringPhrases.find(({ text }) => text === "哈哈")?.evidenceIds,
+    ["s3", "s4"],
+  );
+  assert(!JSON.stringify(profile).includes("喜欢骑车"));
+  assert(!JSON.stringify(profile).includes("朋友去过上海"));
+});
+
+test("custom explicit speaker names on their own lines are correctly attributed", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "aaa小王\n哈喽哈喽\naaa老王\n来了\naaa小王\n听多了？啥\naaa老王\n我刚那句说岔了",
+      { displayName: "昵称", exampleSpeaker: "aaa老王" },
+    ),
+  );
+  assert.equal(profile.targetSpeaker, "aaa老王");
+  assert.deepEqual(profile.samples, [
+    { id: "s1", text: "来了", prompt: "哈喽哈喽", scene: "greeting" },
+    {
+      id: "s2",
+      text: "我刚那句说岔了",
+      prompt: "听多了？啥",
+      scene: "clarification",
+    },
+  ]);
+});
+
+test("an explicit example speaker overrides the public display name", () => {
+  const profile = distillPlayStyle(
+    persona("小王：这句是朋友说的\n老王：收到", {
+      displayName: "小王",
+      exampleSpeaker: "老王",
+    }),
+  );
+  assert.deepEqual(
+    profile.samples.map(({ text }) => text),
+    ["收到"],
+  );
+  assert.equal(profile.samples[0].prompt, "这句是朋友说的");
+  const alias = distillPlayStyle(
+    persona("我：这是朋友说的话😊\n老王：行", { exampleSpeaker: "老王" }),
+  );
+  assert.deepEqual(
+    alias.samples.map(({ text }) => text),
+    ["行"],
+  );
+  assert.equal(alias.metrics.emojiRate, 0);
+  assert.equal(
+    distillPlayStyle(persona("我：朋友说的话\n老王：行")).samples.length,
+    1,
+  );
+});
+
+test("explicit speaker labels support emoji and punctuation literally", () => {
+  for (const label of ["老王🍵", "老王（本人）", "Alice: CEO"]) {
+    const profile = distillPlayStyle(
+      persona(`朋友：在吗\n${label}：在呢`, { exampleSpeaker: label }),
+    );
+    assert.deepEqual(
+      profile.samples.map(({ text, prompt }) => ({ text, prompt })),
+      [{ text: "在呢", prompt: "在吗" }],
+    );
+  }
+  const profile = distillPlayStyle(
+    persona("老王：行\n小王🍵：这是朋友的话\n老王：嗯"),
+  );
+  assert.deepEqual(
+    profile.samples.map(({ text }) => text),
+    ["行", "嗯"],
+  );
+  assert.equal(profile.samples[1].prompt, "这是朋友的话");
+});
+
+test("the summary records the actual learned speaker for follow-up corrections", () => {
+  assert.equal(distillPlayStyle(persona("我：来了")).targetSpeaker, "我");
+  assert.equal(distillPlayStyle(persona("Me: hey")).targetSpeaker, "me");
+  assert.equal(distillPlayStyle(persona("老王：来了")).targetSpeaker, "老王");
+  assert.equal(distillPlayStyle(persona("改天约呗")).targetSpeaker, "我");
+});
+
+test("irregular header-only exports never absorb unidentified speakers into host speech", () => {
+  const profile = distillPlayStyle(
+    persona("老王\n第一句\n小王\n朋友的话\n老王\n第二句\n未识别的换行内容"),
+  );
+  assert.deepEqual(
+    profile.samples.map(({ text }) => text),
+    ["第一句", "第二句"],
+  );
+  assert(profile.warnings.includes("ignored_lines"));
+});
+
+test("ambiguous named conversations require identification, never mix both speakers", () => {
+  for (const examples of [
+    "张三：你好\n李四：来了",
+    "张三\n你好\n李四\n来了\n张三\n好",
+    "张三：你好\n张三：还有事吗",
+  ]) {
+    const profile = distillPlayStyle(persona(examples));
+    assert.equal(profile.samples.length, 0);
+    assert.equal(profile.summary.status, "needs_examples");
+    assert(profile.warnings.includes("unrecognized_speakers"));
+  }
+  assert.equal(
+    distillPlayStyle(
+      persona("张三：你好\n李四：来了", { exampleSpeaker: "李四" }),
+    ).samples[0].text,
+    "来了",
+  );
+});
+
+test("unlabeled personal messages remain usable and are explicitly marked", () => {
+  const profile = distillPlayStyle(persona("改天约呗\n哈哈\n行啊\n没睡醒"));
+  assert.deepEqual(
+    profile.samples.map(({ text }) => text),
+    ["改天约呗", "哈哈", "行啊", "没睡醒"],
+  );
+  assert(profile.warnings.includes("unlabeled_self"));
+  assert.equal(profile.summary.status, "limited");
+  assert.equal(profile.summary.pairedExampleCount, 0);
+});
+
+test("odd header exports and read receipts do not leak another person's speech", () => {
+  const profile = distillPlayStyle(
+    persona("老王\n行啊\n小王\n那说定了\n老王\n晚点见\n已读", {
+      displayName: "昵称",
+    }),
+  );
+  assert.equal(profile.samples.length, 0);
+  assert(profile.warnings.includes("unrecognized_speakers"));
+  assert(profile.warnings.includes("ignored_lines"));
+});
+
+test("example boundaries and system events prevent invented cross-conversation pairs", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "朋友：旧的问题\n\n我：独立的一句\n---\n朋友：新问题\n2026-09-16 12:03\n我：新回答\n朋友：撤回前的问题\n系统：你撤回了一条消息\n我：还有事吗",
+    ),
+  );
+  assert.equal(profile.samples[0].prompt, undefined);
+  assert.equal(profile.samples[1].prompt, "新问题");
+  assert.equal(profile.samples[2].prompt, undefined);
+  assert(profile.warnings.includes("ignored_lines"));
+});
+
+test("timestamps cannot become speakers, and message colons and URLs stay intact", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "12:34\n朋友：链接呢\n我：https://example.com/a:b\n昨天 13:00\n朋友：你说啥\n我：我是说：下周再来",
+    ),
+  );
+  assert.deepEqual(
+    profile.samples.map(({ text }) => text),
+    ["https://example.com/a:b", "我是说：下周再来"],
+  );
+  assert.equal(profile.samples[0].prompt, "链接呢");
+  assert.equal(profile.samples[1].prompt, "你说啥");
+});
+
+test("metrics use host graphemes, including emoji sequences and combining characters", () => {
+  assert.equal(graphemeLength("👨‍👩‍👧‍👦"), 1);
+  assert.equal(graphemeLength("e\u0301"), 1);
+  const profile = distillPlayStyle(
+    persona("我：嗯\n我：好呀\n我：👨‍👩‍👧‍👦！\n我：啥？\n我：哈哈（歪头笑）"),
+  );
+  assert.equal(profile.metrics.medianLength, 2);
+  assert.equal(profile.metrics.p90Length, 7);
+  assert.equal(profile.metrics.emojiRate, 0.2);
+  assert.equal(profile.metrics.questionRate, 0.2);
+  assert.equal(profile.metrics.exclamationRate, 0.2);
+  assert.equal(profile.metrics.finalPunctuationRate, 0.4);
+  assert.equal(profile.metrics.actionRate, 0.2);
+  assert.equal(
+    distillPlayStyle(persona("我：吃过了（中午）")).metrics.actionRate,
+    0,
+  );
+});
+
+test("status describes evidence quantity and requires multiple authentic pairs", () => {
+  assert.equal(distillPlayStyle(persona("")).summary.status, "needs_examples");
+  const unpaired = Array.from({ length: 8 }, (_, i) => `我：第${i}句`).join(
+    "\n",
+  );
+  assert.equal(distillPlayStyle(persona(unpaired)).summary.status, "limited");
+  const paired = Array.from(
+    { length: 8 },
+    (_, i) => `朋友：问题${i}\n我：回答${i}`,
+  ).join("\n");
+  const profile = distillPlayStyle(persona(paired));
+  assert.equal(profile.summary.status, "ready");
+  assert.equal(profile.summary.pairedExampleCount, 8);
+  assert(!profile.warnings.includes("limited_examples"));
+  assert.deepEqual(summarizePlayStyle(profile), profile.summary);
+});
+
+test("retrieval uses the friend's scene and avoids unrelated life-history examples", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "朋友：你住哪里\n我：我住在火星基地\n朋友：哈喽哈喽\n我：来了\n朋友：听多了？啥\n我：我刚说岔了\n朋友：一眼AI\n我：这么明显吗哈哈\n朋友：要不要一起喝咖啡\n我：走呗",
+    ),
+  );
+  assert.deepEqual(
+    selectStyleExamples(profile, "你好").map(({ text }) => text),
+    ["来了"],
+  );
+  assert.deepEqual(
+    selectStyleExamples(profile, "什么意思").map(({ text }) => text),
+    ["我刚说岔了"],
+  );
+  assert.deepEqual(
+    selectStyleExamples(profile, "一眼ai").map(({ text }) => text),
+    ["这么明显吗哈哈"],
+  );
+  assert.deepEqual(selectStyleExamples(profile, "今天天气晴朗"), []);
+  assert.deepEqual(selectStyleExamples(profile, "你好", 0), []);
+  assert.deepEqual(
+    selectStyleExamples(profile, "你好"),
+    selectStyleExamples(profile, "你好"),
+  );
+});
+
+test("retrieval deduplicates speech and favors paired examples over standalone samples", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "我：哈喽\n朋友：你好\n我：来了\n朋友：嗨\n我：来了\n朋友：哈喽\n我：在呢",
+    ),
+  );
+  const selected = selectStyleExamples(profile, "你好");
+  assert.deepEqual(
+    selected.map(({ text }) => text),
+    ["来了", "在呢", "哈喽"],
+  );
+  assert.equal(selected[2].prompt, undefined);
+});
+
+test("versioned source hashes and profile resolution invalidate edits and corrupt caches", () => {
+  const input = persona("朋友：嗨\n我：来了\n朋友：嗨\n我：来了");
+  const profile = distillPlayStyle(input);
+  assert.equal(profile.version, PLAY_STYLE_VERSION);
+  assert.deepEqual(profile, distillPlayStyle(input));
+  assert.equal(profile.sourceHash, styleSourceHash(input));
+  assert.notEqual(
+    profile.sourceHash,
+    styleSourceHash({ ...input, exampleSpeaker: "别人" }),
+  );
+  assert.deepEqual(
+    resolvePlayStyle(input, JSON.parse(JSON.stringify(profile))),
+    profile,
+  );
+  assert.deepEqual(
+    resolvePlayStyle(input, {
+      ...profile,
+      metrics: { ...profile.metrics, medianLength: NaN },
+    }),
+    profile,
+  );
+  assert.deepEqual(
+    resolvePlayStyle(input, { ...profile, samples: [null] }),
+    profile,
+  );
+  assert.deepEqual(
+    resolvePlayStyle(input, { ...profile, version: "obsolete" }),
+    profile,
+  );
+  assert.deepEqual(
+    resolvePlayStyle(input, {
+      ...profile,
+      samples: [{ ...profile.samples[0], text: "凭空编造的样本" }],
+    }),
+    profile,
+  );
+  const edited = { ...input, examplesText: "我：改了" };
+  assert.deepEqual(resolvePlayStyle(edited, profile), distillPlayStyle(edited));
+});
+
+test("large or truncated sources cannot overflow samples or retrieval budgets", () => {
+  const profile = distillPlayStyle(
+    persona(
+      Array.from(
+        { length: 300 },
+        (_, i) => `朋友：你好${i}\n我：来了${i}`,
+      ).join("\n"),
+    ),
+  );
+  assert.equal(profile.samples.length, 200);
+  assert(profile.warnings.includes("ignored_lines"));
+  assert(selectStyleExamples(profile, "你好", 100).length <= 6);
+  const overlong = distillPlayStyle(persona("我：" + "啊".repeat(20_000)));
+  assert.equal(overlong.samples.length, 0);
+  assert(overlong.warnings.includes("ignored_lines"));
+  const retrieved = selectStyleExamples(profile, "你好");
+  assert(
+    retrieved.reduce(
+      (sum, sample) =>
+        sum + graphemeLength(sample.text) + graphemeLength(sample.prompt ?? ""),
+      0,
+    ) <= 2_000,
+  );
+});

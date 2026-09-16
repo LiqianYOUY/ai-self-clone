@@ -235,6 +235,11 @@ test("one concurrent room wins; identity and persona snapshot remain fixed", asy
     where: { ownerId: actor.id },
   });
   assert(["HUMAN", "AI"].includes(stored.mode));
+  const snapshot = stored.personaSnapshot as {
+    styleProfile?: { sourceHash: string; samples: unknown[] };
+  };
+  assert.equal(snapshot.styleProfile?.samples.length, 1);
+  assert.match(snapshot.styleProfile!.sourceHash, /^[a-f0-9]{64}$/);
   await api.savePlayPersona(actor, { ...persona, memories: "后来的新记忆" });
   const unchanged = await db.playRoom.findUniqueOrThrow({
     where: { id: stored.id },
@@ -242,6 +247,99 @@ test("one concurrent room wins; identity and persona snapshot remain fixed", asy
   assert.equal(unchanged.mode, stored.mode);
   assert.deepEqual(unchanged.personaSnapshot, stored.personaSnapshot);
   await api.cancelPlayRoom(actor, stored.id);
+});
+
+test("saving distills only the selected speaker and a changed corpus creates a new frozen version", async () => {
+  const actor = await host();
+  const saved = await api.savePlayPersona(actor, {
+    ...persona,
+    exampleSpeaker: "老王",
+    examplesText:
+      "小王：今天怎么样？\n老王：还行\n小王：出来吃饭吗？\n老王：走呗",
+  });
+  assert.equal(saved.styleSummary.sampleCount, 2);
+  assert.equal(saved.styleSummary.pairedExampleCount, 2);
+  assert.equal(saved.styleSummary.medianLength, 2);
+  assert.equal(saved.styleSummary.emojiRate, 0);
+  const home = await api.getPlayHome(actor);
+  assert.equal(home.styleSummary?.sourceHash, saved.styleSummary.sourceHash);
+  const record = await db.playPersona.findUniqueOrThrow({
+    where: { ownerId: actor.id },
+  });
+  assert(record.styleProfile);
+  const created = await api.createPlayRoom(actor);
+  const before = await db.playRoom.findUniqueOrThrow({
+    where: { id: created.room.id },
+  });
+  const changed = await api.savePlayPersona(actor, {
+    ...saved.persona,
+    examplesText: saved.persona.examplesText + "\n小王：几点？\n老王：六点呗",
+  });
+  assert.notEqual(
+    changed.styleSummary.sourceHash,
+    saved.styleSummary.sourceHash,
+  );
+  assert.deepEqual(
+    (await db.playRoom.findUniqueOrThrow({ where: { id: created.room.id } }))
+      .personaSnapshot,
+    before.personaSnapshot,
+  );
+  await api.cancelPlayRoom(actor, created.room.id);
+});
+
+test("unrecognized speakers are visible to the host and cannot silently become an AI persona", async () => {
+  const actor = await host();
+  const saved = await api.savePlayPersona(actor, {
+    ...persona,
+    exampleSpeaker: "不存在",
+    examplesText: "甲：你好\n乙：哈喽",
+  });
+  assert.equal(saved.styleSummary.status, "needs_examples");
+  await rejectsCode(api.createPlayRoom(actor), "PERSONA_EXAMPLES_REQUIRED");
+  await rejectsCode(
+    api.previewPlayPersona(actor, {
+      messages: [{ speaker: "FRIEND", text: "你好" }],
+    }),
+    "PERSONA_EXAMPLES_REQUIRED",
+  );
+});
+
+test("private rehearsal uses saved evidence without storing messages or changing experimental statistics", async () => {
+  const actor = await host();
+  const home = await api.getPlayHome(actor);
+  const counts = [await db.playRoom.count(), await db.playMessage.count()];
+  const profile = await db.playPersona.findUniqueOrThrow({
+    where: { ownerId: actor.id },
+  });
+  const preview = await api.previewPlayPersona(actor, {
+    messages: [{ speaker: "FRIEND", text: "吃啥" }],
+  });
+  assert.equal(preview.reply, "嗯，那就一起去呗");
+  assert.equal(preview.styleSummary.sourceHash, home.styleSummary?.sourceHash);
+  assert.deepEqual(
+    [await db.playRoom.count(), await db.playMessage.count()],
+    counts,
+  );
+  assert.deepEqual(
+    await db.playPersona.findUniqueOrThrow({ where: { ownerId: actor.id } }),
+    profile,
+  );
+  assert.deepEqual((await api.getPlayHome(actor)).stats, home.stats);
+  const { POST } = await import("../src/app/api/play/route");
+  const unauthorized = await POST(
+    gameRequest("preview_persona", {
+      messages: [{ speaker: "FRIEND", text: "吃啥" }],
+    }),
+  );
+  assert.equal(unauthorized.status, 401);
+  const allowed = await POST(
+    gameRequest(
+      "preview_persona",
+      { messages: [{ speaker: "FRIEND", text: "吃啥" }] },
+      await hostCookie(actor),
+    ),
+  );
+  assert.equal(allowed.status, 200);
 });
 
 test("invitation is consumed exactly once under a race and guest credential is hashed", async () => {

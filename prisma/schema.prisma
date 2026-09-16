@@ -58,6 +58,8 @@ model PlayPersona {
   style        String      @default("")
   memories     String      @default("")
   examplesText String      @default("")
+  exampleSpeaker String    @default("")
+  styleProfile Json?
   savedAt      DateTime?    @db.Timestamptz(3)
   heartbeatAt  DateTime?    @db.Timestamptz(3)
   createdAt    DateTime     @default(now()) @db.Timestamptz(3)

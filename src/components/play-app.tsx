@@ -35,6 +35,7 @@ import type {
   PlayPersonaInput,
   PlayRoomDto,
   PlayStats,
+  PlayStyleSummary,
 } from "@/domain/play";
 import { SelfBrand } from "@/components/self-brand";
 import { LanguageSwitch, useLanguage } from "@/components/language-provider";
@@ -110,6 +111,18 @@ const errorMessages: Record<string, readonly [string, string]> = {
     "AI is temporarily unavailable. Please try again shortly.",
   ],
   PERSONA_REQUIRED: ["请先保存分身资料。", "Save your persona first."],
+  PERSONA_EXAMPLES_REQUIRED: [
+    "还没有识别出你的发言，请检查示例中的称呼并保存。",
+    "Your messages could not be identified. Check your speaker label and save again.",
+  ],
+  STYLE_REPLY_FAILED: [
+    "这次回复未通过表达风格检查，请重试。",
+    "This reply did not pass the style checks. Please try again.",
+  ],
+  EXAMPLES_FULL: [
+    "对话示例已接近字数上限，请先删减一些示例，再加入纠正。",
+    "Your examples are near the character limit. Remove some before adding this correction.",
+  ],
   HOST_OFFLINE: [
     "主持人暂时离线，请上线后再试。",
     "The host is offline. Try again when they are online.",
@@ -132,9 +145,13 @@ const errorMessages: Record<string, readonly [string, string]> = {
   ],
 };
 
-async function request<T>(url: string, body?: unknown): Promise<T> {
+async function request<T>(
+  url: string,
+  body?: unknown,
+  timeoutMs = 15000,
+): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
@@ -162,7 +179,11 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
 }
 
 function action<T>(name: string, payload: object = {}): Promise<T> {
-  return request<T>(API, { action: name, payload });
+  return request<T>(
+    API,
+    { action: name, payload },
+    name === "preview_persona" ? 90000 : 15000,
+  );
 }
 
 function errorText(error: unknown) {
@@ -474,14 +495,376 @@ const emptyPersona: PlayPersonaInput = {
   style: "",
   memories: "",
   examplesText: "",
+  exampleSpeaker: "",
 };
+
+const styleWarningMessages: Record<string, readonly [string, string]> = {
+  unlabeled_self: [
+    "没有称呼的独立文本按你的发言处理；补上“朋友：／我：”能保留接话关系。",
+    "Unlabeled text was treated as yours. Add Friend: / Me: labels to preserve the conversation context.",
+  ],
+  unrecognized_speakers: [
+    "部分称呼未能匹配到你，请核对“示例中你的称呼”。",
+    "Some speaker labels could not be matched to you. Check your speaker label below.",
+  ],
+  limited_examples: [
+    "样本还少，建议补充至少 8 条本人发言和 3 组接话示例，包含追问、玩笑和日常闲聊。",
+    "Examples are limited. Aim for at least 8 of your messages and 3 conversation pairs, including follow-up questions, jokes and everyday chat.",
+  ],
+  ignored_lines: [
+    "部分内容未能识别为聊天发言，已跳过；请使用“称呼：内容”的格式。",
+    "Some content could not be recognized as messages and was skipped. Use the format Speaker: message.",
+  ],
+};
+
+function personaSignature(persona: PlayPersonaInput | null) {
+  return JSON.stringify([
+    persona?.displayName || "",
+    persona?.bio || "",
+    persona?.style || "",
+    persona?.memories || "",
+    persona?.examplesText || "",
+    persona?.exampleSpeaker || "",
+  ]);
+}
+
+function StyleEvidence({
+  summary,
+  dirty,
+}: {
+  summary: PlayStyleSummary;
+  dirty: boolean;
+}) {
+  const { t } = useLanguage();
+  return (
+    <section
+      className="play-style-evidence"
+      aria-label={t("已保存的表达习惯", "Saved speaking style")}
+    >
+      <div className="play-style-heading">
+        <h3>{t("从你的发言中提取", "Learned from your messages")}</h3>
+        <span className="play-badge">
+          {summary.status === "ready"
+            ? t("示例较充足", "More evidence")
+            : summary.status === "limited"
+              ? t("样本仍少", "Limited examples")
+              : t("需要本人示例", "Your examples needed")}
+        </span>
+      </div>
+      <p className="play-caption">
+        {t(
+          `识别对象：${summary.targetSpeaker || "尚未识别"}`,
+          `Speaker: ${summary.targetSpeaker || "not identified"}`,
+        )}
+        {" · "}
+        {t("资料版本", "Profile version")} {summary.sourceHash.slice(0, 8)}
+      </p>
+      {dirty && (
+        <p className="play-style-unsaved" role="status">
+          {t(
+            "你有未保存的修改。下方习惯仍属于上次保存的资料，保存后才会重新提取。",
+            "You have unsaved changes. These findings describe your previously saved profile and will be updated when you save.",
+          )}
+        </p>
+      )}
+      <dl className="play-style-metrics">
+        <div>
+          <dt>{t("本人发言", "Your messages")}</dt>
+          <dd>{summary.sampleCount}</dd>
+        </div>
+        <div>
+          <dt>{t("接话示例", "Conversation pairs")}</dt>
+          <dd>{summary.pairedExampleCount}</dd>
+        </div>
+        <div>
+          <dt>{t("典型长度", "Median length")}</dt>
+          <dd>
+            {summary.medianLength}
+            <small>{t(" 字符", " chars")}</small>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("使用表情", "Emoji use")}</dt>
+          <dd>
+            {Math.round(summary.emojiRate * 100)}
+            <small>%</small>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("使用问号", "Question marks")}</dt>
+          <dd>
+            {Math.round(summary.questionRate * 100)}
+            <small>%</small>
+          </dd>
+        </div>
+      </dl>
+      {summary.commonPhrases.length > 0 && (
+        <p className="play-style-phrases">
+          <span>{t("常见表达", "Recurring phrases")}</span>
+          {summary.commonPhrases.slice(0, 8).map((phrase) => (
+            <b key={phrase}>{phrase}</b>
+          ))}
+        </p>
+      )}
+      {summary.warnings.length > 0 && (
+        <ul className="play-style-warnings">
+          {summary.warnings.map((warning) => (
+            <li key={warning}>
+              {t(
+                ...(styleWarningMessages[warning] || [
+                  "部分示例需要检查，请核对称呼与格式。",
+                  "Some examples need review. Check speaker labels and formatting.",
+                ]),
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="play-caption">
+        {t(
+          "这些习惯和你的原话会用于回复。示例数量不代表模仿已准确，请通过试聊校准。",
+          "Replies use these patterns and your original examples. Evidence quantity does not guarantee an accurate imitation; try it and correct it.",
+        )}
+      </p>
+    </section>
+  );
+}
+
+type PreviewMessage = { speaker: "FRIEND" | "SOURCE"; text: string };
+
+function PersonaPreview({
+  enabled,
+  dirty,
+  hasExamples,
+  onCorrection,
+}: {
+  enabled: boolean;
+  dirty: boolean;
+  hasExamples: boolean;
+  onCorrection: (friend: string, reply: string) => void;
+}) {
+  const { t } = useLanguage();
+  const [messages, setMessages] = useState<PreviewMessage[]>([]);
+  const [text, setText] = useState("");
+  const [correction, setCorrection] = useState("");
+  const [addedCorrection, setAddedCorrection] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState("");
+  const [error, setError] = useState("");
+  const locked = useRef(false);
+  async function send(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (locked.current || !enabled || !text.trim() || messages.length >= 10)
+      return;
+    locked.current = true;
+    setBusy(true);
+    setError("");
+    const next: PreviewMessage[] = [
+      ...messages,
+      { speaker: "FRIEND", text: text.trim() },
+    ];
+    setPending(text.trim());
+    try {
+      const result = await action<{
+        reply: string;
+        styleSummary: PlayStyleSummary;
+      }>("preview_persona", { messages: next });
+      setMessages([...next, { speaker: "SOURCE", text: result.reply }]);
+      setText("");
+      setCorrection("");
+      setAddedCorrection(false);
+    } catch (error) {
+      setError(errorText(error));
+    } finally {
+      setPending("");
+      setBusy(false);
+      locked.current = false;
+    }
+  }
+  return (
+    <section
+      className="play-persona-preview"
+      aria-label={t("分身试聊", "Persona tryout")}
+    >
+      <div className="play-style-heading">
+        <h3>{t("先和分身聊聊", "Try your persona")}</h3>
+        {messages.length > 0 && (
+          <button
+            type="button"
+            className="play-text-link"
+            disabled={busy}
+            onClick={() => {
+              setMessages([]);
+              setText("");
+              setCorrection("");
+              setAddedCorrection(false);
+              setError("");
+            }}
+          >
+            {t("重新试聊", "Start again")}
+          </button>
+        )}
+      </div>
+      <p className="play-caption">
+        {t(
+          "用朋友的口吻发一句话，看看分身怎么接。每次最多 5 轮，不计入实验，试聊记录不会保存到账号。",
+          "Send a message as a friend and see how your persona responds. Up to 5 turns per tryout. This is separate from the experiment and the chat is not saved to your account.",
+        )}
+      </p>
+      {!enabled && (
+        <p className="play-style-unsaved">
+          {dirty
+            ? t(
+                "先保存修改，再用更新后的资料试聊。",
+                "Save your changes before trying the updated profile.",
+              )
+            : !hasExamples
+              ? t(
+                  "先保存能识别出本人发言的示例，再开始试聊。",
+                  "Save examples that identify your own messages before starting.",
+                )
+              : t(
+                  "保存完成后即可试聊。",
+                  "You can try it once saving finishes.",
+                )}
+        </p>
+      )}
+      {(messages.length > 0 || pending) && (
+        <div
+          className="play-preview-messages"
+          role="log"
+          aria-live="polite"
+          aria-label={t("试聊记录", "Tryout conversation")}
+        >
+          {[
+            ...messages,
+            ...(pending ? [{ speaker: "FRIEND" as const, text: pending }] : []),
+          ].map((message, index) => (
+            <div
+              key={index}
+              className={`play-message${message.speaker === "SOURCE" ? " is-mine" : ""}`}
+            >
+              <span className="play-message-name">
+                {message.speaker === "FRIEND"
+                  ? t("模拟朋友", "As a friend")
+                  : t("你的分身", "Your persona")}
+              </span>
+              <div className="play-bubble">{message.text}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <form className="play-preview-form" onSubmit={send}>
+        <label>
+          {t("朋友会怎么说", "What would a friend say?")}
+          <textarea
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            maxLength={2000}
+            rows={2}
+            disabled={!enabled || busy || messages.length >= 10}
+            placeholder={t(
+              "比如：听多了？啥",
+              "For example: What do you mean?",
+            )}
+          />
+        </label>
+        <div className="play-preview-footer">
+          <span className="play-caption">
+            {busy
+              ? t(
+                  "正在生成，可能需要约一分钟…",
+                  "Generating; this may take about a minute…",
+                )
+              : t(
+                  `${messages.length / 2} / 5 轮`,
+                  `${messages.length / 2} / 5 turns`,
+                )}
+          </span>
+          <button
+            type="submit"
+            className="play-button play-button-subtle"
+            disabled={!enabled || busy || !text.trim() || messages.length >= 10}
+          >
+            {busy ? (
+              <LoaderCircle size={15} className="play-spin" />
+            ) : (
+              <Send size={15} />
+            )}
+            {t("试试回复", "Try a reply")}
+          </button>
+        </div>
+      </form>
+      {messages.length >= 10 && (
+        <p className="play-caption">
+          {t(
+            "已完成 5 轮，可以纠正最后一句，或重新试聊。",
+            "Five turns complete. Correct the last reply or start another tryout.",
+          )}
+        </p>
+      )}
+      {messages.length > 0 && (
+        <div className="play-preview-correction">
+          <label>
+            {t("最后一句，我会这样回", "How I would answer the last message")}
+            <input
+              value={correction}
+              onChange={(event) => setCorrection(event.target.value)}
+              maxLength={2000}
+              disabled={!enabled || busy || addedCorrection}
+              placeholder={t(
+                "写下你自己真实会说的话",
+                "Write what you would actually say",
+              )}
+            />
+          </label>
+          <button
+            type="button"
+            className="play-text-link"
+            disabled={!enabled || busy || !correction.trim() || addedCorrection}
+            onClick={() => {
+              try {
+                onCorrection(
+                  messages[messages.length - 2].text,
+                  correction.trim(),
+                );
+                setCorrection("");
+                setAddedCorrection(true);
+                setError("");
+              } catch (error) {
+                setError(errorText(error));
+              }
+            }}
+          >
+            <Plus size={14} />
+            {t("将我的纠正加入示例", "Add my correction to examples")}
+          </button>
+          <p className="play-caption">
+            {addedCorrection
+              ? t(
+                  "纠正已加入上方草稿，请点击“保存分身资料”使它生效。",
+                  "Your correction is in the draft above. Select Save persona to use it.",
+                )
+              : t(
+                  "仅你亲自填写的纠正会加入草稿；试聊中生成的回复不会自动加入示例。",
+                  "Only your written correction is added to the draft. Generated replies are never added to your examples automatically.",
+                )}
+          </p>
+        </div>
+      )}
+      {error && <Notice text={error} error />}
+    </section>
+  );
+}
 
 function PersonaEditor({
   persona,
+  styleSummary,
   name,
   onSaved,
 }: {
   persona: PlayPersonaInput | null;
+  styleSummary: PlayStyleSummary | null;
   name: string;
   onSaved: () => Promise<void>;
 }) {
@@ -492,7 +875,14 @@ function PersonaEditor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [savedProfile, setSavedProfile] = useState(persona);
+  const [summary, setSummary] = useState(styleSummary);
   const locked = useRef(false);
+  useEffect(() => {
+    setSavedProfile(persona);
+    setSummary(styleSummary);
+  }, [persona, styleSummary]);
+  const dirty = personaSignature(draft) !== personaSignature(savedProfile);
   function update(field: keyof PlayPersonaInput, value: string) {
     setDraft((current) => ({ ...current, [field]: value }));
     setSaved(false);
@@ -505,7 +895,13 @@ function PersonaEditor({
     setError("");
     setSaved(false);
     try {
-      await action("save_persona", draft);
+      const result = await action<{
+        persona: PlayPersonaInput;
+        styleSummary: PlayStyleSummary;
+      }>("save_persona", draft);
+      setDraft(result.persona);
+      setSavedProfile(result.persona);
+      setSummary(result.styleSummary);
       setSaved(true);
       await onSaved();
     } catch (error) {
@@ -526,8 +922,8 @@ function PersonaEditor({
       </div>
       <p className="play-muted">
         {t(
-          "写下语气和几组对话示例。请勿填写真实姓名、联系方式或敏感信息。",
-          "Describe your style with a few examples. Leave out real names, contact details and sensitive information.",
+          "保存后会从你的真实发言中提取表达习惯，并保留接话示例。请勿填写真实姓名、联系方式或敏感信息。",
+          "Saving extracts speaking patterns from your own messages and keeps examples of how you reply. Leave out real names, contact details and sensitive information.",
         )}
       </p>
       <form className="play-form" onSubmit={submit}>
@@ -587,6 +983,26 @@ function PersonaEditor({
           />
         </label>
         <label>
+          {t("示例中你的称呼", "Your speaker label in the examples")}
+          <span className="play-optional">{t("选填", "optional")}</span>
+          <input
+            value={draft.exampleSpeaker || ""}
+            onChange={(event) => update("exampleSpeaker", event.target.value)}
+            maxLength={40}
+            disabled={busy}
+            placeholder={t(
+              "例如：老王；留空自动识别我 / Me / 游戏化名",
+              "E.g. Alex; leave blank for Me / 我 / your game alias",
+            )}
+          />
+          <small className="play-muted">
+            {t(
+              "填写聊天示例里标记你自己的称呼，系统只从你的发言提取习惯。",
+              "Use the label that identifies you in the examples. Only your messages are used to derive your style.",
+            )}
+          </small>
+        </label>
+        <label>
           {t("你的对话示例", "Example conversations")}
           <textarea
             className="play-example-input"
@@ -603,8 +1019,8 @@ function PersonaEditor({
           />
           <small className="play-muted">
             {t(
-              "先写 3–5 组自己的示例即可。只使用你有权分享的内容。",
-              "Start with 3–5 examples of your own. Only share content you have permission to use.",
+              "每行使用“称呼：内容”，保留朋友的上句和你的原话。建议至少 8 条本人发言、3 组接话；只使用你有权分享的内容。",
+              "Use one Speaker: message per line. Keep a friend's message and your original reply. Aim for 8 of your messages and 3 pairs; only share content you have permission to use.",
             )}
           </small>
         </label>
@@ -634,6 +1050,26 @@ function PersonaEditor({
           </button>
         </div>
       </form>
+      {summary && <StyleEvidence summary={summary} dirty={dirty} />}
+      <PersonaPreview
+        key={summary?.sourceHash || "unsaved"}
+        enabled={
+          !busy &&
+          !dirty &&
+          Boolean(summary && summary.status !== "needs_examples")
+        }
+        dirty={dirty}
+        hasExamples={Boolean(summary && summary.status !== "needs_examples")}
+        onCorrection={(friend, reply) => {
+          const speaker =
+            draft.exampleSpeaker?.trim() || summary?.targetSpeaker || "我";
+          const friendSpeaker = speaker === "朋友" ? "对方" : "朋友";
+          const pair = `${friendSpeaker}：${friend.replace(/\s*\r?\n\s*/g, " ")}\n${speaker}：${reply}`;
+          const examples = `${draft.examplesText.trim()}\n\n${pair}`.trim();
+          if (examples.length > 16000) throw new Error("EXAMPLES_FULL");
+          update("examplesText", examples);
+        }}
+      />
     </section>
   );
 }
@@ -1572,6 +2008,7 @@ export function HostPlayApp() {
     home.providerReady &&
     home.online &&
     Boolean(home.persona) &&
+    home.styleSummary?.status !== "needs_examples" &&
     !home.activeRoom;
   return (
     <Frame
@@ -1654,6 +2091,7 @@ export function HostPlayApp() {
         <PersonaEditor
           key={home.actor.id}
           persona={home.persona}
+          styleSummary={home.styleSummary || null}
           name={home.actor.pseudonym}
           onSaved={refresh}
         />
@@ -1725,15 +2163,20 @@ export function HostPlayApp() {
                     )
                   : !home.persona
                     ? t("先保存分身资料。", "Save your persona first.")
-                    : !home.online
+                    : home.styleSummary?.status === "needs_examples"
                       ? t(
-                          "打开上方在线开关。",
-                          "Switch your status to online above.",
+                          "先补充能识别出本人发言的示例。",
+                          "Add examples that identify your own messages first.",
                         )
-                      : t(
-                          "邀请创建后，请保持此页面在线。",
-                          "Keep this page open after creating an invitation.",
-                        )}
+                      : !home.online
+                        ? t(
+                            "打开上方在线开关。",
+                            "Switch your status to online above.",
+                          )
+                        : t(
+                            "邀请创建后，请保持此页面在线。",
+                            "Keep this page open after creating an invitation.",
+                          )}
               </p>
             </section>
           )}

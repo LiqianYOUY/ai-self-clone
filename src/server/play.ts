@@ -20,7 +20,14 @@ import {
   checkPlayProvider,
   generatePlayReply,
   isPlayProviderConfigured,
+  PlayProviderError,
+  playGenerationPolicy,
 } from "./play-provider";
+import {
+  distillPlayStyle,
+  resolvePlayStyle,
+  summarizePlayStyle,
+} from "./play-style";
 
 export const PLAY_HOST_TIMEOUT_MS = 90_000;
 export const PLAY_REPLY_TIMEOUT_MS = 120_000;
@@ -28,6 +35,10 @@ export const PLAY_INVITE_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export const PLAY_CONSENT_VERSION = "play-v1";
 const OPEN_STATUSES = ["WAITING", "ACTIVE", "GUESSING"];
 type Tx = Prisma.TransactionClient;
+type FrozenPlayPersona = PlayPersonaInput & {
+  styleProfile?: unknown;
+  generationPolicy?: unknown;
+};
 const messageInclude = { messages: { orderBy: { sequence: "asc" as const } } };
 type RoomWithMessages = Prisma.PlayRoomGetPayload<{
   include: typeof messageInclude;
@@ -49,8 +60,32 @@ export const playPersonaSchema = z
     style: cleanText(2000, 1),
     memories: cleanText(4000),
     examplesText: cleanText(16000, 1),
+    exampleSpeaker: cleanText(40).optional(),
   })
   .strict();
+export const playPreviewSchema = z
+  .object({
+    messages: z
+      .array(
+        z
+          .object({
+            speaker: z.enum(["FRIEND", "SOURCE"]),
+            text: cleanText(2000, 1),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(9),
+  })
+  .strict()
+  .refine(
+    ({ messages }) =>
+      messages.at(-1)?.speaker === "FRIEND" &&
+      messages.every(
+        (message, index) =>
+          message.speaker === (index % 2 === 0 ? "FRIEND" : "SOURCE"),
+      ),
+  );
 export const playMessageSchema = z
   .object({
     text: cleanText(2000, 1),
@@ -164,6 +199,7 @@ function personaInput(persona: PlayPersona): PlayPersonaInput {
     style: persona.style,
     memories: persona.memories,
     examplesText: persona.examplesText,
+    exampleSpeaker: persona.exampleSpeaker,
   };
 }
 const isOnline = (persona: PlayPersona | null, now = Date.now()) =>
@@ -309,6 +345,11 @@ export async function getPlayHome(actor: Actor | null): Promise<PlayHomeDto> {
         ...empty,
         actor: { id: owner.id, pseudonym: owner.pseudonym },
         persona: persona?.savedAt ? personaInput(persona) : null,
+        styleSummary: persona?.savedAt
+          ? summarizePlayStyle(
+              resolvePlayStyle(personaInput(persona), persona.styleProfile),
+            )
+          : null,
         online: isOnline(persona, now.getTime()),
         activeRoom: activeRoom ? hostRoom(activeRoom) : null,
         recentRooms: recentRooms.map((room) =>
@@ -327,15 +368,65 @@ export async function getPlayHome(actor: Actor | null): Promise<PlayHomeDto> {
 
 export async function savePlayPersona(actor: Actor, input: PlayPersonaInput) {
   const data = checked(playPersonaSchema, input);
+  const styleProfile = distillPlayStyle(data);
   return mutation(async (tx) => {
     await requireHost(tx, actor);
     const saved = await tx.playPersona.upsert({
       where: { ownerId: actor.id },
-      create: { ownerId: actor.id, ...data, savedAt: new Date() },
-      update: { ...data, savedAt: new Date() },
+      create: {
+        ownerId: actor.id,
+        ...data,
+        styleProfile: JSON.parse(JSON.stringify(styleProfile)),
+        savedAt: new Date(),
+      },
+      update: {
+        ...data,
+        exampleSpeaker: data.exampleSpeaker ?? "",
+        styleProfile: JSON.parse(JSON.stringify(styleProfile)),
+        savedAt: new Date(),
+      },
     });
-    return { persona: personaInput(saved) };
+    return {
+      persona: personaInput(saved),
+      styleSummary: summarizePlayStyle(styleProfile),
+    };
   });
+}
+
+/** Private rehearsal: no room, experiment result, or learned AI output is saved. */
+export async function previewPlayPersona(
+  actor: Actor,
+  input: z.infer<typeof playPreviewSchema>,
+) {
+  const { messages } = checked(playPreviewSchema, input);
+  await requireHost(prisma, actor);
+  const saved = await prisma.playPersona.findUnique({
+    where: { ownerId: actor.id },
+  });
+  requireValue(saved?.savedAt, "PERSONA_REQUIRED", 409);
+  const persona = personaInput(saved);
+  const styleProfile = resolvePlayStyle(persona, saved.styleProfile);
+  requireValue(
+    styleProfile.samples.length > 0,
+    "PERSONA_EXAMPLES_REQUIRED",
+    409,
+  );
+  let reply: string;
+  try {
+    reply = await generatePlayReply({ persona, styleProfile, messages });
+  } catch (error) {
+    if (error instanceof PlayProviderError)
+      throw new GatewayError(
+        503,
+        error.code === "INVALID_REPLY"
+          ? "STYLE_REPLY_FAILED"
+          : "PROVIDER_UNAVAILABLE",
+      );
+    throw error;
+  }
+  // Re-check authority after inference, including deletion/withdrawal during the call.
+  await requireHost(prisma, actor);
+  return { reply, styleSummary: summarizePlayStyle(styleProfile) };
 }
 
 export async function heartbeatPlayHost(actor: Actor, online: boolean) {
@@ -372,6 +463,15 @@ export async function createPlayRoom(actor: Actor) {
       where: { ownerId: actor.id },
     });
     requireValue(persona?.savedAt, "PERSONA_REQUIRED", 409);
+    const styleProfile = resolvePlayStyle(
+      personaInput(persona),
+      persona.styleProfile,
+    );
+    requireValue(
+      styleProfile.samples.length > 0,
+      "PERSONA_EXAMPLES_REQUIRED",
+      409,
+    );
     requireValue(isOnline(persona), "HOST_OFFLINE", 409);
     requireValue(
       !(await tx.playRoom.findFirst({
@@ -386,7 +486,13 @@ export async function createPlayRoom(actor: Actor) {
         ownerId: actor.id,
         mode: randomInt(2) === 0 ? "HUMAN" : "AI",
         inviteHash: hashPlayToken(token),
-        personaSnapshot: { ...personaInput(persona) },
+        personaSnapshot: JSON.parse(
+          JSON.stringify({
+            ...personaInput(persona),
+            styleProfile,
+            generationPolicy: playGenerationPolicy(),
+          }),
+        ),
         expiresAt: new Date(Date.now() + PLAY_INVITE_LIFETIME_MS),
       },
       include: messageInclude,
@@ -606,7 +712,7 @@ export async function runPendingPlayReply(roomId: string): Promise<void> {
     return {
       roomId: room.id,
       turn: room.pendingTurn,
-      persona: room.personaSnapshot as unknown as PlayPersonaInput,
+      persona: room.personaSnapshot as unknown as FrozenPlayPersona,
       messages: room.messages.map((message) => ({
         speaker: message.speaker as PlaySpeaker,
         text: message.text,
@@ -623,7 +729,12 @@ export async function runPendingPlayReply(roomId: string): Promise<void> {
     const text = checked(
       cleanText(2000, 1),
       await generatePlayReply(
-        { persona: job.persona, messages: job.messages },
+        {
+          persona: job.persona,
+          styleProfile: job.persona.styleProfile,
+          generationPolicy: job.persona.generationPolicy,
+          messages: job.messages,
+        },
         { signal: controller.signal },
       ),
     );

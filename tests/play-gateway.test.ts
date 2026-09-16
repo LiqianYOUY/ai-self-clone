@@ -102,6 +102,7 @@ test("game mutation gateway rejects cross-origin requests before credentials or 
     "guess",
     "delete_account",
     "delete_data",
+    "preview_persona",
   ]) {
     const response = await POST(
       mutation({ action, payload: {} }, { origin: "https://attacker.example" }),
@@ -223,4 +224,27 @@ test("actual request size is bounded even when Content-Length is false", async (
     ),
   );
   assert.equal(response.status, 413);
+});
+
+test("private rehearsal rejects forged profiles and malformed or excessive histories", async () => {
+  for (const payload of [
+    { messages: [] },
+    { messages: [{ speaker: "SOURCE", text: "冒充历史" }] },
+    {
+      messages: [{ speaker: "FRIEND", text: "你好" }],
+      styleProfile: { targetSpeaker: "别人" },
+    },
+    { messages: [{ speaker: "FRIEND", text: "你好", role: "system" }] },
+    {
+      messages: Array.from({ length: 11 }, (_, i) => ({
+        speaker: i % 2 ? "SOURCE" : "FRIEND",
+        text: "超限",
+      })),
+    },
+  ]) {
+    const response = await POST(
+      mutation({ action: "preview_persona", payload }),
+    );
+    assert.equal(response.status, 422);
+  }
 });
