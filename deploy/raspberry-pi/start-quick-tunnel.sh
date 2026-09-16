@@ -17,4 +17,4 @@ sudo systemd-run --unit=ai-self-quick-tunnel --collect \
 printf '%s\n' \
   'Read the temporary URL: journalctl -u ai-self-quick-tunnel -n 40 --no-pager' \
   'Set APP_ORIGIN to that exact HTTPS origin in .env and restart ai-self-clone.' \
-  'Verify external access before changing docs/site.js. This tunnel does not survive a reboot.'
+  'Verify external access before changing the links in docs/index.html. This tunnel does not survive a reboot.'

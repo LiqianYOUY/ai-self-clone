@@ -104,6 +104,13 @@ body {
   background: var(--home-green);
   color: #fff;
 }
+.self-home .home-language button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+#availability {
+  scroll-margin-top: 7rem;
+}
 .self-home .home-hero {
   display: grid;
   grid-template-columns: 1.2fr 1fr;

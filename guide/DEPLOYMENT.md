@@ -113,5 +113,7 @@ Compose 默认只绑定宿主机回环地址，异地部署还需 HTTPS 代理�
 ## GitHub
 
 - `docs/` 作为 Pages 发布目录；源代码仓库保持独立 public。
+- `docs/index.html` 直接提供游戏和完整隐私链接，不依赖脚本切换“待上线”状态；更换游戏地址时更新 HTML 中的对应链接，脚本会沿用主入口并附加语言参数。
+- 页面引用的 JS/CSS 带内容版本参数。修改静态资源后，同步更新 `index.html` 中的 `?v=` 值，避免 GitHub Pages 的旧缓存延迟显示新内容。原 `#availability` 链接保留为主按钮下的简短说明锚点。
 - `deploy/github-actions-ci.yml` 是 CI 模板。当前发布凭据缺少 `workflow` 权限，未启用自动工作流；本地完整验收不依赖它。
 - `.env`、`.local/`、密钥、数据库和模型不会上传。原始研究输入统一保存在被忽略的 `.local/research-inputs/`。

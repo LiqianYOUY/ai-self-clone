@@ -1,5 +1,5 @@
-// Set this only after the public game endpoint has passed deployment checks.
-const ONLINE_GAME_URL = "https://ai-self-clone.tail3d8705.ts.net/play";
+// Working links live in HTML; JavaScript only enhances the language controls.
+const ONLINE_GAME_URL = document.getElementById("study-link").href;
 const LANGUAGE_KEY = "self-language";
 
 const translations = {
@@ -18,9 +18,7 @@ const translations = {
     description:
       "和熟悉的朋友聊五轮，判断回复来自本人还是 AI。本实验仅研究人与 AI、真人的互动。",
     start: "开始实验",
-    pendingAction: "查看上线状态",
-    pending: "在线入口准备中，开放后可直接用浏览器参与。",
-    caption: "昵称参与 · 朋友无需账号",
+    caption: "浏览器直接参与 · 无需下载",
     steps: "如何参与",
     stepOne: "留下表达习惯",
     stepOneBody: "使用昵称或随机用户名，提供几段不含身份信息的对话示例。",
@@ -51,10 +49,7 @@ const translations = {
     description:
       "Chat with someone you know for five rounds, then guess who replied. This study explores interaction with AI and real people.",
     start: "Start the study",
-    pendingAction: "View availability",
-    pending:
-      "Online access is being prepared. Once open, you can join in your browser.",
-    caption: "Use a nickname · Guests need no account",
+    caption: "Join in your browser · No download needed",
     steps: "How to take part",
     stepOne: "Share your speaking style",
     stepOneBody:
@@ -97,24 +92,15 @@ function setLanguage(language) {
       String(button.dataset.language === language),
     );
   });
-  const available = Boolean(ONLINE_GAME_URL);
   const studyLink = document.getElementById("study-link");
-  if (available) {
-    const game = new URL(ONLINE_GAME_URL);
-    game.searchParams.set("lang", language);
-    studyLink.href = game.href;
-    const privacy = new URL("/privacy", game);
-    privacy.searchParams.set("lang", language);
-    document.querySelectorAll("[data-privacy-link]").forEach((link) => {
-      link.href = privacy.href;
-    });
-  }
-  document.getElementById("study-label").textContent = available
-    ? text.start
-    : text.pendingAction;
-  document.getElementById("availability").hidden = available;
-  document.getElementById("ready-caption").hidden = !available;
-  document.getElementById("privacy-full").hidden = !available;
+  const game = new URL(ONLINE_GAME_URL);
+  game.searchParams.set("lang", language);
+  studyLink.href = game.href;
+  const privacy = new URL("/privacy", game);
+  privacy.searchParams.set("lang", language);
+  document.querySelectorAll("[data-privacy-link]").forEach((link) => {
+    link.href = privacy.href;
+  });
   try {
     localStorage.setItem(LANGUAGE_KEY, language);
   } catch {
@@ -133,4 +119,5 @@ if (initialLanguage !== "zh" && initialLanguage !== "en") {
 setLanguage(initialLanguage === "en" ? "en" : "zh");
 document.querySelectorAll("[data-language]").forEach((button) => {
   button.addEventListener("click", () => setLanguage(button.dataset.language));
+  button.disabled = false;
 });
