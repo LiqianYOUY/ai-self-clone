@@ -2019,3 +2019,228 @@
     transition: none !important;
   }
 }
+
+/* Shared language control and readable, compact game interactions. */
+.play-topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 22px;
+  min-width: 0;
+}
+.play-language-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 3px;
+  border: 1px solid #cfd8c9;
+  border-radius: 999px;
+  background: #f6f7ef;
+}
+.play-root .play-language-switch button {
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  min-width: 40px;
+  min-height: 34px;
+  padding: 5px 10px;
+  background: transparent;
+  color: #53684e;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.play-root .play-language-switch button[aria-pressed="true"] {
+  background: var(--play-green);
+  color: #fffef8;
+}
+.play-shell-footer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  color: #64735c;
+  font-size: 12px;
+}
+.play-shell-footer a,
+.play-consent a {
+  color: var(--play-green);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.play-consent a {
+  display: inline-block;
+  margin-inline-start: 0.35em;
+}
+.play-shell .play-form .play-consent {
+  color: #5d6e54;
+  font-size: 12px;
+  line-height: 1.75;
+}
+.play-shell .play-form label,
+.play-shell .play-guess-reason {
+  font-size: 13px;
+}
+.play-shell .play-caption,
+.play-shell .play-form label > small,
+.play-shell .play-form-footer > .play-caption,
+.play-shell .play-stat-grid small,
+.play-shell .play-stats .play-section-heading > .play-caption,
+.play-shell .play-join-rules > span > span,
+.play-shell .play-chat-person p,
+.play-shell .play-composer-note,
+.play-shell .play-guess-options label > span,
+.play-shell .play-online-toggle small {
+  font-size: 12px;
+  color: #67775f;
+}
+.play-shell .play-muted,
+.play-shell .play-auth-card > .play-muted,
+.play-shell .play-persona > .play-muted,
+.play-shell .play-join-card > .play-muted,
+.play-shell .play-guess > .play-muted,
+.play-shell .play-result > p,
+.play-shell .play-stat-grid span,
+.play-shell .play-start-hint {
+  font-size: 13px;
+  color: #62735a;
+}
+.play-shell .play-rounds,
+.play-shell .play-badge,
+.play-shell .play-chat-wait {
+  font-size: 12px;
+}
+.play-shell .play-optional {
+  font-size: 11px;
+  color: #6e7a64;
+}
+.play-delete-control {
+  max-width: 1380px;
+  margin: 24px auto 0;
+  text-align: right;
+}
+.play-friend-room > .play-delete-control {
+  padding-top: 18px;
+  border-top: 1px solid var(--play-line);
+}
+.play-delete-control > .play-text-link {
+  font-size: 12px;
+  color: #7c695f;
+}
+.play-delete-confirm {
+  max-width: 620px;
+  margin-left: auto;
+  padding: 22px;
+  text-align: left;
+  border: 1px solid #e7d7cc;
+  border-radius: 14px;
+  background: #fff9f4;
+  color: #5c453b;
+}
+.play-delete-confirm strong {
+  font-size: 16px;
+}
+.play-delete-confirm p {
+  margin: 9px 0 18px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.play-delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.play-delete-confirm .play-notice {
+  margin-top: 15px;
+}
+.play-root .play-button-danger {
+  background: #8b4635;
+  border: 1px solid #8b4635;
+  color: white;
+}
+.play-root .play-button-danger:hover:not(:disabled) {
+  background: #73372a;
+}
+.play-deleted {
+  max-width: 620px;
+  margin: 70px auto 30px;
+  text-align: center;
+}
+.play-deleted > svg {
+  color: var(--play-green);
+  margin: 0 auto 20px;
+}
+.play-deleted h1 {
+  font-size: clamp(24px, 4vw, 34px);
+}
+.play-deleted p {
+  margin: 14px 0 28px;
+  color: #62735a;
+}
+html[lang="en"] .play-auth-copy h1 {
+  line-height: 1.18;
+  letter-spacing: -1.5px;
+}
+html[lang="en"] .play-auth-flow > span {
+  white-space: normal;
+  text-align: center;
+  min-width: 90px;
+}
+html[lang="en"] .play-section-heading {
+  flex-wrap: wrap;
+}
+html[lang="en"] .play-section-heading h2 {
+  line-height: 1.3;
+}
+@media (max-width: 600px) {
+  .play-shell .play-topbar {
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .play-topbar-actions {
+    gap: 12px;
+    margin-left: auto;
+  }
+  .play-topbar-actions .play-account > span {
+    max-width: 75px;
+  }
+  .play-account > button > .play-signout-label {
+    display: inline;
+    font-size: 11px;
+  }
+  .play-shell .play-stat-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .play-shell .play-stat-grid > div {
+    padding: 0 0 14px;
+    border-left: 0;
+    border-bottom: 1px solid var(--play-line);
+  }
+  .play-shell .play-stat-grid > div:last-child {
+    padding-bottom: 0;
+    border-bottom: 0;
+  }
+  .play-shell .play-stat-grid strong {
+    margin: 2px 0;
+    font-size: 30px;
+  }
+  .play-guess-options {
+    grid-template-columns: 1fr 1fr;
+  }
+  .play-shell .play-guess-options label > span {
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .play-delete-confirm {
+    padding: 18px;
+  }
+  .play-delete-actions > button {
+    flex: 1;
+  }
+  .play-deleted {
+    margin-top: 35px;
+  }
+}

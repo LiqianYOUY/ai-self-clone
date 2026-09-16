@@ -4,11 +4,13 @@ import {
   createPortalSession,
   getPortalActor,
   logoutPortal,
+  PORTAL_COOKIES,
   type Actor,
 } from "@/server/auth";
 import { getPlayGuest, playGuestCookieHeaders } from "@/server/play-auth";
 import {
   assertMutationRequest,
+  allowedOrigin,
   enforceRateLimit,
   GatewayError,
   jsonResponse,
@@ -19,6 +21,8 @@ import { authenticateAccount, registerPlayHost } from "@/server/portals";
 import {
   cancelPlayRoom,
   createPlayRoom,
+  deletePlayAccount,
+  deletePlayData,
   getPlayHome,
   getPlayRoom,
   guessPlayRoom,
@@ -59,6 +63,8 @@ const command = z.discriminatedUnion("action", [
     .strict(),
   z.object({ action: z.literal("login"), payload: credentials }).strict(),
   z.object({ action: z.literal("logout"), payload: empty }).strict(),
+  z.object({ action: z.literal("delete_account"), payload: empty }).strict(),
+  z.object({ action: z.literal("delete_data"), payload: roomPayload }).strict(),
   z
     .object({ action: z.literal("save_persona"), payload: playPersonaSchema })
     .strict(),
@@ -147,6 +153,8 @@ function safeError(error: unknown): Response {
 async function requireHost(request: Request): Promise<Actor> {
   const actor = await getPortalActor(request, "target");
   if (!actor) throw new GatewayError(401, "AUTHENTICATION_REQUIRED");
+  if (actor.role !== "TARGET" || !actor.id.startsWith("play-target-"))
+    throw new GatewayError(403, "FORBIDDEN");
   enforceRateLimit(`play-host:${actor.id}`, 180);
   return actor;
 }
@@ -190,6 +198,8 @@ export async function POST(request: Request): Promise<Response> {
         body.action === "register"
           ? await registerPlayHost(body.payload)
           : await authenticateAccount({ ...body.payload, portal: "target" });
+      if (actor.role !== "TARGET" || !actor.id.startsWith("play-target-"))
+        throw new GatewayError(403, "FORBIDDEN");
       return await createPortalSession(request, "target", actor);
     }
     if (body.action === "inspect_invite") {
@@ -207,6 +217,22 @@ export async function POST(request: Request): Promise<Response> {
           joined.room.id,
           joined.guestToken,
           joined.expiresAt,
+        ),
+      );
+    }
+    if (body.action === "delete_data") {
+      const guest = getPlayGuest(request, body.payload.roomId);
+      enforceRateLimit(`play-guest:${guest.tokenHash}`, 90);
+      return jsonResponse(
+        await deletePlayData(guest),
+        200,
+        // Only clear this capability; omit the other cookies from the helper's
+        // capacity handling so deleting one room cannot log out another room.
+        playGuestCookieHeaders(
+          new Request(request.url),
+          guest.roomId,
+          "",
+          new Date(0),
         ),
       );
     }
@@ -240,6 +266,10 @@ export async function POST(request: Request): Promise<Response> {
 
     const actor = await requireHost(request);
     switch (body.action) {
+      case "delete_account":
+        return jsonResponse(await deletePlayAccount(actor), 200, {
+          "Set-Cookie": `${PORTAL_COOKIES.target}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${new URL(allowedOrigin()).protocol === "https:" ? "; Secure" : ""}`,
+        });
       case "logout":
         await heartbeatPlayHost(actor, false);
         return await logoutPortal(request, "target");

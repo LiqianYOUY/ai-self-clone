@@ -1,4 +1,5 @@
 node_modules
+.cache
 .next
 .next-build
 .next-*
@@ -11,6 +12,7 @@ node_modules
 test-results
 playwright-report
 docs
+guide
 tests
 *.tsbuildinfo
 .DS_Store

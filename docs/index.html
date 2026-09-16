@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="用昵称参与五轮文字实验，研究人与 AI、真人的互动。资料仅用于实验及分析，完成后删除，个人信息不公开。"
+    />
+    <meta name="theme-color" content="#254f41" />
+    <title>Self · 人机交互实验</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script src="./site.js" defer></script>
+  </head>
+  <body class="self-home">
+    <a class="home-skip" href="#main" data-i18n="skip">跳到主要内容</a>
+    <div class="home-wrap">
+      <header class="home-header">
+        <a
+          class="home-brand"
+          href="./"
+          aria-label="Self 首页"
+          data-i18n-aria="home"
+        >
+          <svg
+            width="30"
+            height="30"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            aria-hidden="true"
+          >
+            <path
+              d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z"
+            />
+          </svg>
+          <span>self</span><small data-i18n="tagline">人机交互实验</small>
+        </a>
+        <nav class="home-nav" aria-label="页面导航" data-i18n-aria="navigation">
+          <a
+            class="home-text-link"
+            href="#privacy"
+            data-privacy-link
+            data-i18n="privacy"
+            >隐私说明</a
+          >
+          <div
+            class="home-language"
+            role="group"
+            aria-label="选择语言"
+            data-i18n-aria="language"
+          >
+            <button
+              type="button"
+              lang="zh-CN"
+              data-language="zh"
+              aria-pressed="true"
+            >
+              中文
+            </button>
+            <button
+              type="button"
+              lang="en"
+              data-language="en"
+              aria-pressed="false"
+            >
+              EN
+            </button>
+          </div>
+        </nav>
+      </header>
+      <main id="main">
+        <section class="home-hero" aria-labelledby="home-title">
+          <div class="home-copy">
+            <p class="home-eyebrow" data-i18n="eyebrow">五轮对话 · 一次判断</p>
+            <h1 id="home-title">
+              <span data-i18n="titleOne">是朋友，</span
+              ><span data-i18n="titleTwo">还是 AI？</span>
+            </h1>
+            <p class="home-description" data-i18n="description">
+              和熟悉的朋友聊五轮，判断回复来自本人还是 AI。本实验仅研究人与
+              AI、真人的互动。
+            </p>
+            <a class="home-primary" id="study-link" href="#availability"
+              ><span id="study-label">查看上线状态</span
+              ><span aria-hidden="true">→</span></a
+            >
+            <p
+              class="home-caption"
+              id="availability"
+              role="status"
+              data-i18n="pending"
+            >
+              在线入口准备中，开放后可直接用浏览器参与。
+            </p>
+            <p
+              class="home-caption"
+              id="ready-caption"
+              data-i18n="caption"
+              hidden
+            >
+              昵称参与 · 朋友无需账号
+            </p>
+          </div>
+          <ol class="home-flow" aria-label="如何参与" data-i18n-aria="steps">
+            <li>
+              <span class="home-step-number" aria-hidden="true">01</span>
+              <div>
+                <h2 data-i18n="stepOne">留下表达习惯</h2>
+                <p data-i18n="stepOneBody">
+                  使用昵称或随机用户名，提供几段不含身份信息的对话示例。
+                </p>
+              </div>
+            </li>
+            <li>
+              <span class="home-step-number" aria-hidden="true">02</span>
+              <div>
+                <h2 data-i18n="stepTwo">邀请一位朋友</h2>
+                <p data-i18n="stepTwoBody">
+                  保持页面打开，系统随机安排你或 AI 回复。
+                </p>
+              </div>
+            </li>
+            <li>
+              <span class="home-step-number" aria-hidden="true">03</span>
+              <div>
+                <h2 data-i18n="stepThree">聊天，然后判断</h2>
+                <p data-i18n="stepThreeBody">
+                  五轮后提交猜测并揭晓。你可以随时结束参与。
+                </p>
+              </div>
+            </li>
+          </ol>
+        </section>
+        <section
+          class="home-privacy"
+          id="privacy"
+          aria-labelledby="privacy-title"
+        >
+          <h2 id="privacy-title" data-i18n="privacyTitle">
+            你的资料，只用于这次研究。
+          </h2>
+          <div>
+            <p data-i18n="privacyBody">
+              无需真实姓名、邮箱或手机号，请勿填写可识别身份的信息。资料仅用于本实验及相关分析，实验与分析完成后删除，个人信息不会公开。
+            </p>
+            <a
+              class="home-text-link"
+              href="#privacy"
+              id="privacy-full"
+              data-privacy-link
+              hidden
+              ><span data-i18n="privacyLink">查看完整隐私说明</span
+              ><span aria-hidden="true">↗</span></a
+            >
+          </div>
+        </section>
+      </main>
+      <footer class="home-footer">
+        <span data-i18n="footer">Self · AI 与真人互动实验</span>
+        <nav aria-label="项目文档" data-i18n-aria="documents">
+          <a
+            href="https://github.com/LiqianYOUY/ai-self-clone/blob/main/guide/FEATURES.md"
+            data-i18n="features"
+            >功能说明</a
+          >
+          <a href="https://github.com/LiqianYOUY/ai-self-clone">GitHub ↗</a>
+        </nav>
+      </footer>
+    </div>
+  </body>
+</html>

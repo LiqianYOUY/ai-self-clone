@@ -1,16 +1,18 @@
-# AI Self Clone Study：架构与信任边界
+# 架构、需求与信任边界
 
-本工程把两份提供的文档当作需求资料。文档中“第一轮只交付 M0 / 确认后再实现”是原始交付流程，与用户本次“完成系统搭建”的直接请求不同；本次据此继续实现可运行的合成研究工作台。文档中的伦理批准、知情同意、供应商协议与正式研究门槛仍保留。开发完成不授予真人研究权限。
+完整服务采用 Next.js App Router、TypeScript、PostgreSQL / Prisma 和持久化 Node / Socket.IO。合成研究演练默认使用虚构人物、语料和事件，研究 AI adapter 不连接外部模型。真人准备区与可使用本地模型的五轮游戏分别运行，不能据此启用正式研究。
 
-本地运行使用 Next.js App Router、TypeScript、PostgreSQL / Prisma 和持久化 Node 服务。默认只载入合成人物、合成语料和研究事件。合成 AI adapter 不连接外部模型。正式模式不能由界面按钮、环境变量或填写一个模型 key 直接启用。
+原始研究输入仅保留在本机，不公开到源码仓库或网页；这里记录实现合同与边界。开发完成不授予真人研究权限，未知批准项保持缺失。
 
-## 三端扩展
+## 模块与数据隔离
 
-新增 Research / Target / Friend 独立页面，用户名/密码 Account 关联 Participant，AuthSession 新增 portal 字段。三个独立 HttpOnly Cookie 与固定角色共同授权。EnrollmentInvitation 用散列 token、7 天有效期与单次消费管理注册；PreparationRoom / PreparationMessage 保存真人准备聊天，与 Session / Message 正式实验模型分离。
+Research / Target / Friend 提供独立页面，用户名/密码 Account 关联 Participant，AuthSession 新增 portal 字段。三个独立 HttpOnly Cookie 与固定角色共同授权。EnrollmentInvitation 用散列 token、7 天有效期与单次消费管理注册；PreparationRoom / PreparationMessage 保存真人准备聊天，与 Session / Message 正式实验模型分离。
 
-`src/server/portals.ts` 承担真实账号、邀请、个人资料、同意、准备聊天室及退出；`/api/portal` 负责严格请求校验和门户认证。研究端只读准备进度，不读取私人正文。真实 Target / Friend 在旧 `/api/study` 及 engine 层同时拒绝；演练聚合只纳入无 Account 的 demo 参与者，审计排除 PORTAL_ 事件。新模型迁移为 `202609060003_portal_enrollment`。详细授权和接口见 [PORTALS.md](PORTALS.md)。
+`src/server/portals.ts` 承担真实账号、邀请、个人资料、同意、准备聊天室及退出；`/api/portal` 负责严格请求校验和门户认证。研究端只读准备进度，不读取私人正文。真实 Target / Friend 在旧 `/api/study` 及 engine 层同时拒绝；演练聚合只纳入无 Account 的 demo 参与者，审计排除 PORTAL_ 事件。新模型迁移为 `202609060003_portal_enrollment`。详细授权和接口见 [FEATURES.md](FEATURES.md)。
 
-下图与后文描述原实验演练引擎；其 AI adapter 和正式实验条件没有因入口扩展而被启用。
+五轮文字游戏由 `src/server/play.ts`、`play-auth.ts` 和 `play-provider.ts` 实现，使用独立游戏资料、房间及消息。游戏账号可复用 Target 会话，但自助注册不自动加入研究名单；游戏模型与下述正式研究 provider 分离。
+
+完整在线服务需要持久 Node 进程、PostgreSQL 和模型接口；GitHub Pages 仅支持静态文件，不能承载账号、聊天或模型 API。在线部署模板与实际已上线服务必须区分。下图及后文描述合成研究演练引擎。
 
 ## 组件与边界
 
@@ -54,12 +56,15 @@ src/domain/
   state-machine.ts        状态转换、epoch、交付时刻、grapheme、公开消息
   provider.ts             合成 adapter 与受控 Anthropic adapter
   instruments.ts          量表范围、缺失、pAI 与 CSV 单元格
-src/server/               会话认证、Prisma、种子数据和研究工作流
+src/server/               main.ts 持久服务入口、认证、Prisma 和研究工作流
 prisma/schema.prisma      完整关系模型
 prisma/migrations/        初始迁移、约束和冻结保护
 scripts/                  本地 PostgreSQL、迁移与合成种子启动
+scripts/testing/          HTTP、导航和生产验证脚本
 tests/                    领域与数据库内核测试
-docs/                     原文提取、需求对照和运行材料
+deploy/                   Docker / Compose 与部署配置
+guide/                    功能、架构与验证文档
+.cache/                   本地构建及测试缓存，不进入仓库
 ```
 
 ## 状态、停止与交付事实
@@ -117,6 +122,38 @@ Offline 是独立任务，使用同一个固定 excerpt / context 的 familiar �
 
 ## Provider 与正式环境集成
 
-Anthropic adapter 使用固定 `https://api.anthropic.com/v1/messages`、`anthropic-version: 2023-06-01`、非流式文本和固定日期 model ID，禁止 HTTP 重定向和工具。校验响应 model 与内部 JSON；拒绝、工具型输出、无效内容和模型漂移不重试。仅临时网络 / 服务错误允许获批上限内重试，最多两次。实现依据：[Messages API](https://platform.claude.com/docs/en/api/messages/create)、[Stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)。供应商实际协议、模型可用性、region 与 retention 仍须逐项批准，本次没有真实 API 调用。
+Anthropic adapter 使用固定 `https://api.anthropic.com/v1/messages`、`anthropic-version: 2023-06-01`、非流式文本和固定日期 model ID，禁止 HTTP 重定向和工具。校验响应 model 与内部 JSON；拒绝、工具型输出、无效内容和模型漂移不重试。仅临时网络 / 服务错误允许获批上限内重试，最多两次。实现依据：[Messages API](https://platform.claude.com/docs/en/api/messages/create)、[Stop reasons](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)。供应商实际协议、模型可用性、region 与 retention 仍须逐项批准，未记录正式研究 provider 的真实 API 联调。
 
 `liveConfigSchema` 要求伦理、同意、供应商、托管、安全、保留、测量、随机化、offline、独立验证与冻结证据各组均有批准记录且字段完整。它验证格式与缺项，不替机构认证批准文件真伪；正式启用需要获授权人审阅证据并完成机构集成。本版工作台仍保持合成运行。
+
+## 需求覆盖与剩余验证
+
+下列项目补充上述架构边界，详细测试结果统一见 [VERIFICATION.md](VERIFICATION.md)。
+
+| 能力           | 实现与验收边界                                                                                                                                                  |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 请求与会话安全 | `auth.ts` / `http.ts` 检查服务端身份、Origin、HttpOnly Cookie、实际字节上限、限流和受控错误；正式身份服务、TLS/密钥管理仍需部署集成。                           |
+| 时间与文本合同 | `state-machine.ts` 使用 Unicode grapheme、epoch 与持久 outbox；复杂 emoji/组合字和 overshoot 已有自动测试，真实网络行为需独立验证。                             |
+| 个人资料构建   | `onboarding` / `persona` 支持逐条语料、校准、DEV 预览、基线与冻结；正式 80–150 条语料、15–30 道校准题、5–10 次试问及支持数须按协议验收。                        |
+| 隐私和安全规则 | `privacy.ts` / `safety.ts` 覆盖本地扫描、来源质询、退出、轻度情绪、危机和现实边界；中文、英文、混合、否定与引用有合成回归，规则不是完整敏感信息检测或临床认证。 |
+| 量表与关系测量 | `instruments.ts` 与 surveys/relationship 保持独立量表、可跳过、pAI、分母及污染标记；范围/缺失已校验，正式版本和问卷理解须锁定。                                 |
+| Debrief        | 支持 pre-debrief、提前停止与来源披露选择；不显示“友情分数”，不以完成问卷为退出条件。正式 staged window 仍需批准。                                               |
+| 导出           | 六关联导出、字典、CSV 注入防护和 manifest；UTF-8，null 与空字符串分开，正文导出默认未授权。                                                                     |
+| 版本固定       | 配置、模型、persona、prompt、调查、时序与分配需要 manifest；现有 hash/迁移保护禁止静默漂移，删除仍可使冻结内容失效。                                            |
+| 验证材料       | 测试使用合成文本及 mock fetch。`UNIT-TEST-ONLY` 批准配置只检验 schema/adapter 结构，不是机构批准文件。                                                          |
+
+## 正式部署前必须补齐的证据
+
+1. 伦理审查路径、批准编号、PIS / consent、参与资格、补偿、退出和支持路径。
+2. 机构托管、正式身份认证、独立身份服务、TLS、静态加密、密钥管理、最小数据库账号与网络 allowlist。
+3. 供应商协议、精确模型快照、区域、保留 / ZDR适用范围和功能白名单。不能把 API 调用等同于零保留。
+4. 值守与备援人员、服务时段、应答时限、地区资源以及安全演练。
+5. 保留 / 删除 / 备份过期 / 外部副本协议，以及独立删除账本的恢复验证。
+6. 正式 corpus / calibration / DEV负担，个人节奏拟合、独立 holdout、预定容差、设备与网络红队、metadata分类器分组留出与区间。
+7. 样本精度 / 功效模拟、live与offline估计目标、话题版本、near-balanced seed保管、排期可用性、问卷顺序和缺失策略。
+8. excerpt固定抽样、双方secondary-sharing、familiar/unfamiliar覆盖与停止规则、staged debrief时间窗、配额不披露与完整TargetBlock。
+9. 正式 code commit、policy / persona / prompt / model / survey / timing / allocation manifest、预注册和获授权人发布审核。
+
+## 解释限制
+
+确定性约束通过说明已执行测试中的程序约束成立；它不证明聊天者无法区分来源，也不证明安全规则具有临床敏感度。没有发现直接字段泄漏不等于无所有工程线索。未显著高于50% 不等于不可辨别；未显著时序差异不等于等效。36 dyads / 216 sessions 不是 216 个独立 Target。familiar / unfamiliar不是随机分配的关系身份，same-stimulus 结果仍需谨慎解释。Target 自评和 Friend 评价保持相应知情条件，不自动当作匹配分差。

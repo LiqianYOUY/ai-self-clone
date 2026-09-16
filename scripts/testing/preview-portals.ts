@@ -102,7 +102,7 @@ async function main() {
       : "development",
   });
   process.env.NEXT_DIST_DIR =
-    process.env.PORTAL_UI_PREVIEW_BUILD_DIR ?? ".next-portals-preview";
+    process.env.PORTAL_UI_PREVIEW_BUILD_DIR ?? ".cache/portals-preview";
   if (process.platform === "darwin") {
     const suffix = process.arch === "arm64" ? "darwin-arm64" : "darwin";
     const schemaEngine = resolve(
@@ -118,8 +118,8 @@ async function main() {
   }
   stage = "migrate isolated schema";
   await migrate();
-  database = (await import("../src/server/db")).prisma;
-  const portals = await import("../src/server/portals");
+  database = (await import("../../src/server/db")).prisma;
+  const portals = await import("../../src/server/portals");
   stage = "create disposable UI accounts";
   const consent = { participation: true, version: "enrollment-v1" };
   const researcher = await portals.initializeResearchAccount(
@@ -185,7 +185,7 @@ async function main() {
     kind: "FRIEND",
   });
   stage = "start isolated UI server";
-  server = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
+  server = spawn(process.execPath, ["--import", "tsx", "src/server/main.ts"], {
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });

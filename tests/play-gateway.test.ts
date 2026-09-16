@@ -100,6 +100,8 @@ test("game mutation gateway rejects cross-origin requests before credentials or 
     "send_message",
     "reply",
     "guess",
+    "delete_account",
+    "delete_data",
   ]) {
     const response = await POST(
       mutation({ action, payload: {} }, { origin: "https://attacker.example" }),
@@ -129,6 +131,13 @@ test("client identity, provider, prompt and actor injection cannot choose a room
       payload: { model: "test-model", prompt: "secret" },
     },
     { action: "create_room", payload: {}, actor: { role: "TARGET" } },
+    { action: "delete_account", payload: { actorId: "other-host" } },
+    {
+      action: "delete_account",
+      payload: {},
+      actor: { id: "other-host", role: "TARGET" },
+    },
+    { action: "delete_data", payload: { roomId: "room-a", guestToken: token } },
     {
       action: "reply",
       payload: {
@@ -190,6 +199,7 @@ test("guest commands cannot authenticate with role headers, tokens in JSON, or a
       payload: { roomId: "room-a", guess: "HUMAN", reason: "x" },
     },
     { action: "leave", payload: { roomId: "room-a" } },
+    { action: "delete_data", payload: { roomId: "room-a" } },
   ]) {
     const response = await POST(
       mutation(body, {

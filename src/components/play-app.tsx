@@ -37,8 +37,100 @@ import type {
   PlayStats,
 } from "@/domain/play";
 import { SelfBrand } from "@/components/self-brand";
+import { LanguageSwitch, useLanguage } from "@/components/language-provider";
 
 const API = "/api/play";
+const errorMessages: Record<string, readonly [string, string]> = {
+  REQUEST_FAILED: [
+    "操作没有完成，请稍后重试。",
+    "The action could not be completed. Please try again.",
+  ],
+  REQUEST_TIMEOUT: [
+    "连接超时，请重试。已发送的消息不会重复提交。",
+    "The connection timed out. Please retry; sent messages will not be duplicated.",
+  ],
+  NETWORK_ERROR: [
+    "网络连接中断，请检查网络后重试。",
+    "Connection lost. Check your network and try again.",
+  ],
+  AUTHENTICATION_REQUIRED: [
+    "请先登录，或通过邀请链接进入聊天。",
+    "Please sign in, or open your invitation link to join.",
+  ],
+  INVALID_CREDENTIALS: [
+    "账号或密码不正确。",
+    "Incorrect username or password.",
+  ],
+  FORBIDDEN: [
+    "当前账号无法执行这项操作。",
+    "This account cannot perform that action.",
+  ],
+  NOT_FOUND: [
+    "这局聊天不存在或已被删除。",
+    "This game is unavailable or has been deleted.",
+  ],
+  INVALID_INPUT: [
+    "请检查输入内容。",
+    "Please check the information you entered.",
+  ],
+  INVALID_STATE: [
+    "游戏状态已改变，请刷新后重试。",
+    "The game has changed. Refresh and try again.",
+  ],
+  REQUEST_REJECTED: [
+    "请求未完成，请检查输入和当前状态。",
+    "The request could not be completed. Check your input and the game status.",
+  ],
+  TRY_AGAIN_LATER: [
+    "操作过于频繁，请稍后再试。",
+    "Too many requests. Please wait a moment and try again.",
+  ],
+  INVITATION_INVALID: [
+    "邀请已使用、取消或过期，请朋友发来新的邀请。",
+    "This invitation has been used, cancelled or expired. Ask your friend for a new one.",
+  ],
+  INVITATION_MISSING: [
+    "请通过朋友发来的完整邀请链接加入。",
+    "Open the full invitation link your friend sent you.",
+  ],
+  ACCOUNT_UNAVAILABLE: [
+    "这个用户名不可用，请换一个。",
+    "That username is unavailable. Please choose another.",
+  ],
+  ACCOUNT_EXISTS: [
+    "这个用户名不可用，请换一个。",
+    "That username is unavailable. Please choose another.",
+  ],
+  PROVIDER_NOT_CONFIGURED: [
+    "AI 尚未就绪，请稍后再试。",
+    "AI is not ready yet. Please try again shortly.",
+  ],
+  PROVIDER_UNAVAILABLE: [
+    "AI 暂时不可用，请稍后重试。",
+    "AI is temporarily unavailable. Please try again shortly.",
+  ],
+  PERSONA_REQUIRED: ["请先保存分身资料。", "Save your persona first."],
+  HOST_OFFLINE: [
+    "主持人暂时离线，请上线后再试。",
+    "The host is offline. Try again when they are online.",
+  ],
+  ROOM_EXISTS: [
+    "请先结束当前这局聊天。",
+    "End your current game before creating another.",
+  ],
+  IDEMPOTENCY_CONFLICT: [
+    "这次操作已提交，请刷新查看结果。",
+    "This action has already been submitted. Refresh to see the result.",
+  ],
+  COPY_FAILED: [
+    "自动复制失败，请选中邀请链接手动复制。",
+    "Copy failed. Select the invitation link and copy it manually.",
+  ],
+  ACTION_BUSY: [
+    "上一项操作尚未完成，请稍等。",
+    "Please wait for the current action to finish.",
+  ],
+};
 
 async function request<T>(url: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
@@ -57,14 +149,12 @@ async function request<T>(url: string, body?: unknown): Promise<T> {
           }),
     });
     const result = await response.json().catch(() => null);
-    if (!response.ok)
-      throw new Error(result?.error || "暂时无法连接，请稍后重试。");
+    if (!response.ok) throw new Error(result?.code || "REQUEST_FAILED");
     return result as T;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError")
-      throw new Error("连接超时，请重试。已发送的消息不会重复提交。");
-    if (error instanceof TypeError)
-      throw new Error("网络连接中断，请检查网络后重试。");
+      throw new Error("REQUEST_TIMEOUT");
+    if (error instanceof TypeError) throw new Error("NETWORK_ERROR");
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -76,7 +166,7 @@ function action<T>(name: string, payload: object = {}): Promise<T> {
 }
 
 function errorText(error: unknown) {
-  return error instanceof Error ? error.message : "操作没有完成，请稍后重试。";
+  return error instanceof Error ? error.message : "REQUEST_FAILED";
 }
 
 function Frame({
@@ -88,17 +178,27 @@ function Frame({
   side?: ReactNode;
   compact?: boolean;
 }) {
+  const { t } = useLanguage();
   return (
     <main
       className={`play-root play-shell${compact ? " play-shell-compact" : ""}`}
     >
       <header className="play-topbar">
         <SelfBrand />
-        {side}
+        <div className="play-topbar-actions">
+          {side}
+          <LanguageSwitch />
+        </div>
       </header>
       {children}
       <footer className="play-shell-footer">
-        五轮对话，一次关于熟悉感的小实验。
+        <span>
+          {t(
+            "AI 与人类互动的小实验",
+            "An experiment in AI and human interaction",
+          )}
+        </span>
+        <a href="/privacy">{t("隐私与数据删除", "Privacy & deletion")}</a>
       </footer>
     </main>
   );
@@ -113,16 +213,20 @@ function Notice({
   error?: boolean;
   retry?: () => void;
 }) {
+  const { t } = useLanguage();
+  const message = error
+    ? t(...(errorMessages[text] || errorMessages.REQUEST_FAILED))
+    : text;
   return (
     <div
       className={`play-notice${error ? " play-notice-error" : ""}`}
       role={error ? "alert" : "status"}
     >
-      <span>{text}</span>
+      <span>{message}</span>
       {retry && (
         <button onClick={retry} className="play-text-link">
           <RefreshCw size={14} />
-          重试
+          {t("重试", "Retry")}
         </button>
       )}
     </div>
@@ -130,11 +234,12 @@ function Notice({
 }
 
 function Loading() {
+  const { t } = useLanguage();
   return (
     <Frame>
       <div className="play-loading">
         <LoaderCircle size={25} className="play-spin" />
-        <p>正在打开你的空间…</p>
+        <p>{t("正在打开你的空间…", "Opening your space…")}</p>
       </div>
     </Frame>
   );
@@ -147,6 +252,7 @@ function Auth({
   onSignedIn: () => Promise<void>;
   networkError: string;
 }) {
+  const { t } = useLanguage();
   const [mode, setMode] = useState<"register" | "login">("register");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -179,7 +285,7 @@ function Auth({
       side={
         <a href="/" className="play-text-link">
           <ArrowLeft size={15} />
-          返回首页
+          {t("返回首页", "Home")}
         </a>
       }
     >
@@ -187,45 +293,63 @@ function Auth({
         <div className="play-auth-copy">
           <span className="play-eyebrow">THE PERSON BEHIND THE WORDS</span>
           <h1>
-            把你的语气，
+            {t("把你的语气，", "Your voice.")}
             <br />
-            交给朋友来<span>辨认。</span>
+            {t("交给朋友来", "A friend's ")}
+            <span>{t("辨认。", "intuition.")}</span>
           </h1>
           <p>
-            先准备一个属于你的 AI 分身，
-            <br />
-            再邀请熟悉的朋友，聊五轮、猜一次。
+            {t(
+              "准备分身，邀请朋友。五轮对话后，看看对方能否认出你。",
+              "Build your AI persona and invite a friend. After five rounds, can they tell who replied?",
+            )}
           </p>
           <div className="play-auth-flow">
             <span>
               <Fingerprint size={24} />
-              写下你的样子
+              {t("写下你的样子", "Describe your style")}
             </span>
             <ArrowRight size={17} />
             <span>
               <MessageCircle size={24} />
-              一起聊五轮
+              {t("一起聊五轮", "Chat for five rounds")}
             </span>
             <ArrowRight size={17} />
             <span>
               <Sparkles size={24} />
-              揭晓答案
+              {t("揭晓答案", "Reveal the answer")}
             </span>
           </div>
           <p className="play-fine-print">
             <ShieldCheck size={17} />
-            朋友会事先知道这是本人与 AI 的猜测游戏。你随时可以结束一局。
+            {t(
+              "参与者事先知情，随时可以结束游戏。",
+              "Everyone knows AI may be involved. Either person can end the game.",
+            )}
           </p>
         </div>
         <div className="play-card play-auth-card">
           <span className="play-eyebrow">YOUR PLAY SPACE</span>
-          <h2>{mode === "register" ? "创建我的游戏空间" : "欢迎回来"}</h2>
+          <h2>
+            {mode === "register"
+              ? t("创建我的游戏空间", "Create your play space")
+              : t("欢迎回来", "Welcome back")}
+          </h2>
           <p className="play-muted">
             {mode === "register"
-              ? "账号用于保存分身资料和查看每次揭晓。"
-              : "已有 Target 账号也可以在这里登录。"}
+              ? t(
+                  "账号用于保存分身资料和查看每次揭晓。",
+                  "Save your persona and see your game results.",
+                )
+              : t(
+                  "登录后继续准备分身或查看结果。",
+                  "Sign in to continue with your persona or results.",
+                )}
           </p>
-          <div className="play-tabs" aria-label="账号操作">
+          <div
+            className="play-tabs"
+            aria-label={t("账号操作", "Account options")}
+          >
             <button
               type="button"
               className={mode === "register" ? "is-active" : ""}
@@ -235,7 +359,7 @@ function Auth({
               }}
               disabled={busy}
             >
-              注册
+              {t("注册", "Sign up")}
             </button>
             <button
               type="button"
@@ -246,16 +370,19 @@ function Auth({
               }}
               disabled={busy}
             >
-              登录
+              {t("登录", "Sign in")}
             </button>
           </div>
           <form className="play-form" onSubmit={submit}>
             {mode === "register" && (
               <label>
-                朋友熟悉的名字
+                {t("游戏化名（非实名）", "Game alias (not your real name)")}
                 <input
                   name="pseudonym"
-                  placeholder="大家平常怎么叫你"
+                  placeholder={t(
+                    "请勿使用真实姓名或可识别身份的昵称",
+                    "Choose an alias that does not identify you",
+                  )}
                   autoComplete="nickname"
                   required
                   maxLength={40}
@@ -264,10 +391,13 @@ function Auth({
               </label>
             )}
             <label>
-              用户名
+              {t("用户名", "Username")}
               <input
                 name="username"
-                placeholder="3–40 个字母、数字或下划线"
+                placeholder={t(
+                  "3–40 位字母或数字，可含 . _ -",
+                  "3–40 letters or numbers; . _ - allowed",
+                )}
                 autoComplete="username"
                 autoCapitalize="none"
                 spellCheck={false}
@@ -279,11 +409,11 @@ function Auth({
               />
             </label>
             <label>
-              密码
+              {t("密码", "Password")}
               <input
                 name="password"
                 type="password"
-                placeholder="至少 12 位，保护你的个人资料"
+                placeholder={t("至少 12 位", "At least 12 characters")}
                 autoComplete={
                   mode === "register" ? "new-password" : "current-password"
                 }
@@ -293,6 +423,20 @@ function Auth({
                 disabled={busy}
               />
             </label>
+            {mode === "register" && (
+              <label className="play-consent">
+                <input type="checkbox" required disabled={busy} />
+                <span>
+                  {t(
+                    "我同意将资料与聊天用于人机交互（HCI）实验和分析。个人信息不公开，分析完成后清理；有效登录期间也可自行删除。",
+                    "I agree to my profile and chats being used for this human–computer interaction (HCI) experiment and analysis. Personal information is not public. Data is cleared after analysis; I can delete it earlier while signed in.",
+                  )}
+                  <a href="/privacy">
+                    {t("阅读隐私说明", "Read the privacy notice")}
+                  </a>
+                </span>
+              </label>
+            )}
             {(error || networkError) && (
               <Notice text={error || networkError} error />
             )}
@@ -306,13 +450,18 @@ function Auth({
                 <ArrowRight size={17} />
               )}
               {busy
-                ? "正在进入…"
+                ? t("正在进入…", "Opening…")
                 : mode === "register"
-                  ? "创建空间"
-                  : "进入我的空间"}
+                  ? t("创建空间", "Create space")
+                  : t("进入我的空间", "Enter my space")}
             </button>
           </form>
-          <p className="play-caption">朋友只需要邀请链接和昵称，无需注册。</p>
+          <p className="play-caption">
+            {t(
+              "朋友使用邀请链接和化名加入，无需注册。",
+              "Friends join with an invite link and an alias. No account needed.",
+            )}
+          </p>
         </div>
       </section>
     </Frame>
@@ -336,6 +485,7 @@ function PersonaEditor({
   name: string;
   onSaved: () => Promise<void>;
 }) {
+  const { t } = useLanguage();
   const [draft, setDraft] = useState<PlayPersonaInput>(
     persona || { ...emptyPersona, displayName: name },
   );
@@ -370,16 +520,19 @@ function PersonaEditor({
       <div className="play-section-heading">
         <div>
           <span className="play-eyebrow">01 / YOUR PERSONA</span>
-          <h2>让它慢慢像你</h2>
+          <h2>{t("让它慢慢像你", "Give it your voice")}</h2>
         </div>
         <Fingerprint size={27} strokeWidth={1.3} />
       </div>
       <p className="play-muted">
-        用日常语言写就好。真实的短句，比一长串性格标签更有用。
+        {t(
+          "写下语气和几组对话示例。请勿填写真实姓名、联系方式或敏感信息。",
+          "Describe your style with a few examples. Leave out real names, contact details and sensitive information.",
+        )}
       </p>
       <form className="play-form" onSubmit={submit}>
         <label>
-          对朋友显示的名字
+          {t("游戏化名（非实名）", "Game alias (not your real name)")}
           <input
             value={draft.displayName}
             onChange={(event) => update("displayName", event.target.value)}
@@ -389,7 +542,7 @@ function PersonaEditor({
           />
         </label>
         <label>
-          关于你
+          {t("关于你", "About you")}
           <textarea
             value={draft.bio}
             onChange={(event) => update("bio", event.target.value)}
@@ -397,11 +550,14 @@ function PersonaEditor({
             maxLength={2000}
             required
             disabled={busy}
-            placeholder="平常在做什么、喜欢什么、最近在忙什么…"
+            placeholder={t(
+              "兴趣、爱好或日常话题，不含可识别身份的细节",
+              "Interests, hobbies or everyday topics, without identifying details",
+            )}
           />
         </label>
         <label>
-          你怎么说话
+          {t("你怎么说话", "Your conversation style")}
           <textarea
             value={draft.style}
             onChange={(event) => update("style", event.target.value)}
@@ -409,22 +565,29 @@ function PersonaEditor({
             maxLength={2000}
             required
             disabled={busy}
-            placeholder="比如：句子很短，少用标点，笑的时候说哈哈哈哈，通常先吐槽再认真回答。"
+            placeholder={t(
+              "比如：句子很短，少用标点，笑的时候说哈哈哈哈，通常先吐槽再认真回答。",
+              "For example: short sentences, little punctuation, lots of 'haha', and a joke before a serious answer.",
+            )}
           />
         </label>
         <label>
-          可以聊起的共同经历 <span className="play-optional">选填</span>
+          {t("可以聊起的小事", "Things you might talk about")}
+          <span className="play-optional">{t("选填", "optional")}</span>
           <textarea
             value={draft.memories}
             onChange={(event) => update("memories", event.target.value)}
             rows={3}
             maxLength={4000}
             disabled={busy}
-            placeholder="写下你愿意在游戏中分享的小事；不知道的事情，让分身直接说不记得。"
+            placeholder={t(
+              "只写愿意分享的内容，避免第三人的隐私；不知道的事情，让分身说不记得。",
+              "Only include things you can share. Protect other people's privacy; tell your persona to admit when it doesn't remember.",
+            )}
           />
         </label>
         <label>
-          真实的对话示例
+          {t("你的对话示例", "Example conversations")}
           <textarea
             className="play-example-input"
             value={draft.examplesText}
@@ -433,26 +596,41 @@ function PersonaEditor({
             maxLength={16000}
             required
             disabled={busy}
-            placeholder={
-              "朋友：今晚吃什么？\n我：你别问我 我已经纠结半小时了\n\n朋友：周末出门吗？\n我：先让我睡个懒觉再说哈哈"
-            }
+            placeholder={t(
+              "朋友：今晚吃什么？\n我：你别问我 我已经纠结半小时了\n\n朋友：周末出门吗？\n我：先让我睡个懒觉再说哈哈",
+              "Friend: What should we eat tonight?\nMe: don't ask me i've been deciding for half an hour\n\nFriend: Going out this weekend?\nMe: let me sleep in first haha",
+            )}
           />
           <small className="play-muted">
-            可以先写 3–5 组，之后补到约 30
-            组。只放你有权使用、愿意用于游戏的内容。
+            {t(
+              "先写 3–5 组自己的示例即可。只使用你有权分享的内容。",
+              "Start with 3–5 examples of your own. Only share content you have permission to use.",
+            )}
           </small>
         </label>
         {error && <Notice text={error} error />}
-        {saved && <Notice text="资料已保存，将用于下一局。" />}
+        {saved && (
+          <Notice
+            text={t(
+              "资料已保存，将用于下一局。",
+              "Saved. Your next game will use this profile.",
+            )}
+          />
+        )}
         <div className="play-form-footer">
-          <span className="play-caption">已创建的房间保留开局时的资料。</span>
+          <span className="play-caption">
+            {t(
+              "已创建的房间保留开局时的资料。",
+              "Existing games keep the profile they started with.",
+            )}
+          </span>
           <button className="play-button play-button-primary" disabled={busy}>
             {busy ? (
               <LoaderCircle size={16} className="play-spin" />
             ) : (
               <Check size={16} />
             )}
-            {busy ? "保存中…" : "保存分身资料"}
+            {busy ? t("保存中…", "Saving…") : t("保存分身资料", "Save persona")}
           </button>
         </div>
       </form>
@@ -467,15 +645,22 @@ function RoundDots({
   completed: number;
   max?: number;
 }) {
+  const { t } = useLanguage();
   return (
-    <div className="play-rounds" aria-label={`已完成 ${completed} / ${max} 轮`}>
+    <div
+      className="play-rounds"
+      aria-label={t(
+        `已完成 ${completed} / ${max} 轮`,
+        `${completed} of ${max} rounds completed`,
+      )}
+    >
       <div className="play-round-dots">
         {Array.from({ length: max }, (_, index) => (
           <span key={index} className={index < completed ? "is-done" : ""} />
         ))}
       </div>
       <span>
-        {completed} / {max} 轮
+        {t(`${completed} / ${max} 轮`, `${completed} / ${max} rounds`)}
       </span>
     </div>
   );
@@ -488,6 +673,7 @@ function Conversation({
   room: PlayRoomDto;
   host?: boolean;
 }) {
+  const { t } = useLanguage();
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const element = scroller.current;
@@ -498,18 +684,31 @@ function Conversation({
       className="play-messages"
       ref={scroller}
       role="log"
-      aria-label="聊天记录"
+      aria-label={t("聊天记录", "Conversation")}
       aria-live="polite"
       aria-relevant="additions text"
     >
       {room.messages.length === 0 ? (
         <div className="play-chat-empty">
           <MessageCircle size={35} strokeWidth={1.1} />
-          <h3>{host ? "等朋友说第一句话" : `和${room.hostName}聊点什么吧`}</h3>
+          <h3>
+            {host
+              ? t("等朋友说第一句话", "Waiting for your friend's first message")
+              : t(
+                  `和${room.hostName}聊点什么吧`,
+                  `Start a conversation with ${room.hostName}`,
+                )}
+          </h3>
           <p>
             {host
-              ? "朋友加入后就可以开始五轮对话。"
-              : "问问熟悉的小事，或者照常闲聊。"}
+              ? t(
+                  "朋友加入后就可以开始五轮对话。",
+                  "The five rounds begin when your friend joins.",
+                )
+              : t(
+                  "问问熟悉的小事，或者照常闲聊。",
+                  "Ask about something familiar, or just chat as usual.",
+                )}
           </p>
         </div>
       ) : (
@@ -524,7 +723,7 @@ function Conversation({
             >
               <span className="play-message-name">
                 {message.speaker === "FRIEND"
-                  ? room.friendName || "朋友"
+                  ? room.friendName || t("朋友", "Friend")
                   : room.hostName}
               </span>
               <div className="play-bubble">{message.text}</div>
@@ -539,7 +738,9 @@ function Conversation({
             <i />
             <i />
           </span>
-          {host ? "等待本轮回复" : "等待回复中"}
+          {host
+            ? t("等待本轮回复", "Waiting for this round's reply")
+            : t("等待回复中", "Waiting for a reply")}
         </p>
       )}
     </div>
@@ -555,6 +756,7 @@ function Composer({
   hint: string;
   onSend: (text: string) => Promise<void>;
 }) {
+  const { t } = useLanguage();
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -610,7 +812,7 @@ function Composer({
             }
           }}
           placeholder={hint}
-          aria-label="聊天消息"
+          aria-label={t("聊天消息", "Chat message")}
           maxLength={2000}
           rows={2}
           disabled={disabled || busy}
@@ -619,7 +821,9 @@ function Composer({
           type="submit"
           className="play-button play-button-primary play-send"
           disabled={disabled || busy || !draft.trim()}
-          aria-label={busy ? "发送中" : "发送消息"}
+          aria-label={
+            busy ? t("发送中", "Sending") : t("发送消息", "Send message")
+          }
         >
           {busy ? (
             <LoaderCircle className="play-spin" size={18} />
@@ -631,10 +835,13 @@ function Composer({
       <div className="play-composer-note">
         <span>
           {busy
-            ? "发送中…"
+            ? t("发送中…", "Sending…")
             : disabled
               ? hint
-              : "Enter 发送 · Shift + Enter 换行"}
+              : t(
+                  "Enter 发送 · Shift + Enter 换行",
+                  "Enter to send · Shift + Enter for a new line",
+                )}
         </span>
         <span>{draft.length}/2000</span>
       </div>
@@ -643,6 +850,7 @@ function Composer({
 }
 
 function Result({ room, host = false }: { room: PlayRoomDto; host?: boolean }) {
+  const { t } = useLanguage();
   if (!room.result) return null;
   const { answer, guess, correct, reason } = room.result;
   return (
@@ -657,35 +865,48 @@ function Result({ room, host = false }: { room: PlayRoomDto; host?: boolean }) {
       </span>
       <h2>
         {answer === "HUMAN"
-          ? "刚才，是本人在和你聊。"
-          : "刚才，是 AI 在和你聊。"}
+          ? t("刚才，是本人在和你聊。", "That was the human.")
+          : t("刚才，是 AI 在和你聊。", "That was the AI.")}
       </h2>
       <p>
-        {host ? "朋友" : "你"}猜的是{guess === "HUMAN" ? "本人" : "AI"}，
-        {correct ? "猜对了。" : "这次猜错了。"}
+        {t(
+          `${host ? "朋友" : "你"}猜的是${guess === "HUMAN" ? "本人" : "AI"}，${correct ? "猜对了。" : "这次猜错了。"}`,
+          `${host ? "Your friend guessed" : "You guessed"} ${guess === "HUMAN" ? "human" : "AI"}. ${correct ? "That was correct." : "Not this time."}`,
+        )}
       </p>
       {reason && (
         <blockquote>
-          <span>{host ? "朋友的判断理由" : "你的判断理由"}</span>
+          <span>
+            {host
+              ? t("朋友的判断理由", "Your friend's reasoning")
+              : t("你的判断理由", "Your reasoning")}
+          </span>
           {reason}
         </blockquote>
       )}
       <p className="play-caption">
         {host
-          ? "这次结果已计入统计，可以准备下一局了。"
-          : "这次答案已保存。想再玩一局，可以找朋友要一条新的邀请。"}
+          ? t(
+              "这次结果已计入统计，可以准备下一局了。",
+              "The result is included in your stats. You can start another game.",
+            )
+          : t(
+              "这次答案已保存。想再玩一局，可以找朋友要一条新的邀请。",
+              "Your answer is saved. Ask your friend for a new invite to play again.",
+            )}
       </p>
     </section>
   );
 }
 
 function Guess({
-  room,
-  onGuessed,
+  onGuess,
+  disabled = false,
 }: {
-  room: PlayRoomDto;
-  onGuessed: (room: PlayRoomDto) => void;
+  onGuess: (guess: PlayIdentity, reason: string) => Promise<void>;
+  disabled?: boolean;
 }) {
+  const { t } = useLanguage();
   const [guess, setGuess] = useState<PlayIdentity | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -693,17 +914,12 @@ function Guess({
   const locked = useRef(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!guess || locked.current) return;
+    if (!guess || locked.current || disabled) return;
     locked.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await action<{ room: PlayRoomDto }>("guess", {
-        roomId: room.id,
-        guess,
-        reason: reason.trim(),
-      });
-      onGuessed(result.room);
+      await onGuess(guess, reason.trim());
     } catch (error) {
       setError(errorText(error));
     } finally {
@@ -714,10 +930,17 @@ function Guess({
   return (
     <form className="play-guess" onSubmit={submit}>
       <span className="play-eyebrow">TIME TO TRUST YOUR INSTINCT</span>
-      <h2>五轮聊完了，你的答案是？</h2>
-      <p className="play-muted">回想一下语气、小习惯，或者某个特别像的瞬间。</p>
-      <fieldset className="play-guess-options" disabled={busy}>
-        <legend className="play-sr-only">选择你的判断</legend>
+      <h2>{t("五轮聊完了，你的答案是？", "Five rounds. Who was replying?")}</h2>
+      <p className="play-muted">
+        {t(
+          "回想一下语气、小习惯，或者某个特别像的瞬间。",
+          "Think about the tone, little habits and moments that felt familiar.",
+        )}
+      </p>
+      <fieldset className="play-guess-options" disabled={busy || disabled}>
+        <legend className="play-sr-only">
+          {t("选择你的判断", "Choose your answer")}
+        </legend>
         <label className={guess === "HUMAN" ? "is-selected" : ""}>
           <input
             type="radio"
@@ -727,8 +950,8 @@ function Guess({
             onChange={() => setGuess("HUMAN")}
           />
           <Fingerprint size={25} strokeWidth={1.3} />
-          <strong>是本人</strong>
-          <span>这熟悉的感觉，没错了</span>
+          <strong>{t("是本人", "Human")}</strong>
+          <span>{t("由朋友本人回复", "Your friend replied")}</span>
         </label>
         <label className={guess === "AI" ? "is-selected" : ""}>
           <input
@@ -739,32 +962,43 @@ function Guess({
             onChange={() => setGuess("AI")}
           />
           <Sparkles size={25} strokeWidth={1.3} />
-          <strong>是 AI</strong>
-          <span>总有哪里和本人不太一样</span>
+          <strong>{t("是 AI", "AI")}</strong>
+          <span>
+            {t(
+              "由模仿朋友的 AI 回复",
+              "An AI using your friend's persona replied",
+            )}
+          </span>
         </label>
       </fieldset>
       <label className="play-guess-reason">
-        是什么让你这么觉得？ <span className="play-optional">选填</span>
+        {t("是什么让你这么觉得？", "What made you think so?")}
+        <span className="play-optional">{t("选填", "optional")}</span>
         <textarea
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           rows={3}
           maxLength={2000}
-          placeholder="哪句话特别像，或是哪句话露了馅？"
-          disabled={busy}
+          placeholder={t(
+            "哪句话特别像，或是哪句话露了馅？",
+            "Was there a phrase or a moment that helped you decide?",
+          )}
+          disabled={busy || disabled}
         />
       </label>
       {error && <Notice text={error} error />}
       <button
         className="play-button play-button-primary play-full"
-        disabled={!guess || busy}
+        disabled={!guess || busy || disabled}
       >
         {busy ? (
           <LoaderCircle className="play-spin" size={17} />
         ) : (
           <ArrowRight size={17} />
         )}
-        {busy ? "正在揭晓…" : "确定答案，揭晓身份"}
+        {busy
+          ? t("正在揭晓…", "Revealing…")
+          : t("确定答案，揭晓身份", "Submit & reveal")}
       </button>
     </form>
   );
@@ -777,6 +1011,7 @@ function CancelButton({
   onCancel: () => Promise<void>;
   friend?: boolean;
 }) {
+  const { t } = useLanguage();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -802,8 +1037,14 @@ function CancelButton({
         <>
           <span>
             {friend
-              ? "退出后本局将结束，不会揭晓答案。"
-              : "结束本局后，朋友将无法继续聊天。"}
+              ? t(
+                  "退出后本局将结束，不会揭晓答案。",
+                  "Leaving ends this game without revealing the answer.",
+                )
+              : t(
+                  "结束本局后，朋友将无法继续聊天。",
+                  "Ending the game stops the conversation for both of you.",
+                )}
           </span>
           <div>
             <button
@@ -811,24 +1052,119 @@ function CancelButton({
               disabled={busy}
               onClick={() => setConfirming(false)}
             >
-              继续这局
+              {t("继续这局", "Keep playing")}
             </button>
             <button
               className="play-button play-button-subtle"
               disabled={busy}
               onClick={() => void cancel()}
             >
-              {busy ? "结束中…" : "确认结束"}
+              {busy ? t("结束中…", "Ending…") : t("确认结束", "End game")}
             </button>
           </div>
         </>
       ) : (
         <button className="play-text-link" onClick={() => setConfirming(true)}>
           <X size={14} />
-          {friend ? "退出本局" : "结束本局"}
+          {friend ? t("退出本局", "Leave game") : t("结束本局", "End game")}
         </button>
       )}
       {error && <Notice text={error} error />}
+    </div>
+  );
+}
+
+function DeleteControl({
+  account = false,
+  disabled = false,
+  onDelete,
+}: {
+  account?: boolean;
+  disabled?: boolean;
+  onDelete: () => Promise<void>;
+}) {
+  const { t } = useLanguage();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const locked = useRef(false);
+  async function remove() {
+    if (locked.current || disabled) return;
+    locked.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await onDelete();
+    } catch (error) {
+      setError(errorText(error));
+    } finally {
+      locked.current = false;
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="play-delete-control">
+      {confirming ? (
+        <section
+          className="play-delete-confirm"
+          aria-label={t("确认永久删除", "Confirm permanent deletion")}
+        >
+          <strong>
+            {account
+              ? t(
+                  "删除账号与全部游戏数据？",
+                  "Delete your account and all game data?",
+                )
+              : t("删除本局数据？", "Delete this game's data?")}
+          </strong>
+          <p>
+            {account
+              ? t(
+                  "账号、分身资料、所有游戏对话和结果将永久删除，邀请也会失效。此操作无法恢复。",
+                  "Your account, persona, all game conversations and results will be permanently deleted. Invitations will stop working. This cannot be undone.",
+                )
+              : t(
+                  "本局双方的聊天和判断结果将永久删除，房间将关闭。此操作无法恢复，但不会删除主持人账号。",
+                  "Both participants' messages and the guess in this game will be permanently deleted, and the room will close. This cannot be undone. The host's account will remain.",
+                )}
+          </p>
+          <div className="play-delete-actions">
+            <button
+              type="button"
+              className="play-button play-button-subtle"
+              disabled={busy}
+              onClick={() => {
+                setConfirming(false);
+                setError("");
+              }}
+            >
+              {t("保留数据", "Keep data")}
+            </button>
+            <button
+              type="button"
+              className="play-button play-button-danger"
+              disabled={busy || disabled}
+              onClick={() => void remove()}
+            >
+              {busy
+                ? t("删除中…", "Deleting…")
+                : t("确认永久删除", "Permanently delete")}
+            </button>
+          </div>
+          {error && <Notice text={error} error />}
+        </section>
+      ) : (
+        <button
+          type="button"
+          className="play-text-link"
+          disabled={disabled}
+          onClick={() => setConfirming(true)}
+        >
+          {account
+            ? t("删除账号与全部游戏数据", "Delete account & all game data")
+            : t("删除本局数据", "Delete this game's data")}
+        </button>
+      )}
     </div>
   );
 }
@@ -842,9 +1178,19 @@ function HostRoom({
   inviteUrl: string;
   onChanged: () => Promise<void>;
 }) {
+  const { t, language } = useLanguage();
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState("");
   const lastSend = useRef<{ text: string; key: string } | null>(null);
+  const invitation =
+    inviteUrl && typeof window !== "undefined"
+      ? new URL(inviteUrl, window.location.origin)
+      : null;
+  invitation?.searchParams.set("lang", language);
+  const shareUrl = invitation?.href || inviteUrl;
+  useEffect(() => {
+    setCopied(false);
+  }, [shareUrl]);
   async function reply(text: string) {
     if (!lastSend.current || lastSend.current.text !== text)
       lastSend.current = { text, key: crypto.randomUUID() };
@@ -858,13 +1204,11 @@ function HostRoom({
   }
   async function copy() {
     try {
-      await navigator.clipboard.writeText(
-        new URL(inviteUrl, window.location.origin).href,
-      );
+      await navigator.clipboard.writeText(shareUrl);
       setCopied(true);
       setCopyError("");
     } catch {
-      setCopyError("未能自动复制，请选中下面的邀请链接手动复制。");
+      setCopyError("COPY_FAILED");
     }
   }
   return (
@@ -874,12 +1218,17 @@ function HostRoom({
           <span className="play-eyebrow">02 / THE CURRENT ROUND</span>
           <h2>
             {room.status === "WAITING"
-              ? "邀请已经准备好"
-              : `和${room.friendName || "朋友"}的这一局`}
+              ? t("邀请已经准备好", "Your invitation is ready")
+              : t(
+                  `和${room.friendName || "朋友"}的这一局`,
+                  `Round with ${room.friendName || "your friend"}`,
+                )}
           </h2>
         </div>
         <span className="play-badge">
-          {room.mode === "HUMAN" ? "本局由你回复" : "本局由 AI 回复"}
+          {room.mode === "HUMAN"
+            ? t("本局由你回复", "You reply this round")
+            : t("本局由 AI 回复", "AI replies this round")}
         </span>
       </div>
       {room.status === "WAITING" ? (
@@ -887,21 +1236,22 @@ function HostRoom({
           <span className="play-invite-icon">
             <Link2 size={30} strokeWidth={1.3} />
           </span>
-          <h3>把链接发给一个熟悉的朋友</h3>
+          <h3>
+            {t("把链接发给一个熟悉的朋友", "Share the link with a friend")}
+          </h3>
           <p className="play-muted">
-            邀请只能加入一次。请保持当前页面在线，等待朋友到来。
+            {t(
+              "邀请只能加入一次。请保持当前页面在线，等待朋友到来。",
+              "This invite can be used once. Keep this page open while waiting.",
+            )}
           </p>
           {inviteUrl ? (
             <>
               <div className="play-invite-link">
                 <input
-                  aria-label="邀请链接"
+                  aria-label={t("邀请链接", "Invitation link")}
                   readOnly
-                  value={
-                    typeof window === "undefined"
-                      ? inviteUrl
-                      : new URL(inviteUrl, window.location.origin).href
-                  }
+                  value={shareUrl}
                   onFocus={(event) => event.target.select()}
                 />
                 <button
@@ -909,13 +1259,18 @@ function HostRoom({
                   onClick={() => void copy()}
                 >
                   {copied ? <Check size={16} /> : <Copy size={16} />}
-                  {copied ? "已复制" : "复制链接"}
+                  {copied ? t("已复制", "Copied") : t("复制链接", "Copy link")}
                 </button>
               </div>
               {copyError && <Notice text={copyError} error />}
             </>
           ) : (
-            <Notice text="此邀请链接仅在创建时显示。若链接已丢失，可结束本局后重新创建。" />
+            <Notice
+              text={t(
+                "此邀请链接仅在创建时显示。若链接已丢失，可结束本局后重新创建。",
+                "The link is only available when created. If it is lost, end this game and create a new invitation.",
+              )}
+            />
           )}
         </div>
       ) : (
@@ -924,8 +1279,11 @@ function HostRoom({
             <RoundDots completed={room.turnsCompleted} max={room.maxTurns} />
             <span>
               {room.mode === "HUMAN"
-                ? "按你平常的方式回复即可。"
-                : "AI 正在使用开局时的分身资料。"}
+                ? t("按你平常的方式回复即可。", "Reply as you normally would.")
+                : t(
+                    "AI 正在使用开局时的分身资料。",
+                    "AI is using the profile saved when this game began.",
+                  )}
             </span>
           </div>
           <Conversation room={room} host />
@@ -934,18 +1292,31 @@ function HostRoom({
               disabled={room.waitingFor !== "SOURCE"}
               hint={
                 room.waitingFor === "SOURCE"
-                  ? "写下你的回复…"
-                  : "等待朋友发来下一句话"
+                  ? t("写下你的回复…", "Write your reply…")
+                  : t(
+                      "等待朋友发来下一句话",
+                      "Waiting for your friend's next message",
+                    )
               }
               onSend={reply}
             />
           )}
           {room.status === "GUESSING" && (
-            <Notice text="五轮对话已完成，等待朋友提交判断。" />
+            <Notice
+              text={t(
+                "五轮对话已完成，等待朋友提交判断。",
+                "Five rounds complete. Waiting for your friend's guess.",
+              )}
+            />
           )}
           {room.status === "REVEALED" && <Result room={room} host />}
           {room.status === "CANCELLED" && (
-            <Notice text="本局已结束，未完成的对话不会计入猜测结果。" />
+            <Notice
+              text={t(
+                "本局已结束，未完成的对话不会计入猜测结果。",
+                "This game ended. Unfinished games do not count toward guess rates.",
+              )}
+            />
           )}
         </>
       )}
@@ -968,6 +1339,7 @@ function Stats({
   stats: PlayStats;
   rooms: PlayHostRoomDto[];
 }) {
+  const { t } = useLanguage();
   const percent = (value: number | null) =>
     value === null ? "—" : `${Math.round(value * 100)}%`;
   return (
@@ -975,46 +1347,67 @@ function Stats({
       <div className="play-section-heading">
         <div>
           <span className="play-eyebrow">03 / AFTER THE REVEAL</span>
-          <h2>朋友眼里的你</h2>
+          <h2>{t("朋友眼里的你", "How friends read you")}</h2>
         </div>
-        <span className="play-caption">小样本，先看反馈</span>
+        <span className="play-caption">
+          {t("小样本，先看反馈", "A small sample, for reflection")}
+        </span>
       </div>
       <div className="play-stat-grid">
         <div>
-          <span>AI 被猜成本人</span>
+          <span>{t("AI 被猜成本人", "AI guessed as human")}</span>
           <strong>{percent(stats.aiFooledRate)}</strong>
-          <small>{stats.aiRounds} 局 AI 已揭晓</small>
+          <small>
+            {t(
+              `${stats.aiRounds} 局 AI 已揭晓`,
+              `${stats.aiRounds} AI rounds revealed`,
+            )}
+          </small>
         </div>
         <div>
-          <span>本人被正确认出</span>
+          <span>{t("本人被正确认出", "Human recognized")}</span>
           <strong>{percent(stats.humanRecognizedRate)}</strong>
-          <small>{stats.humanRounds} 局本人已揭晓</small>
+          <small>
+            {t(
+              `${stats.humanRounds} 局本人已揭晓`,
+              `${stats.humanRounds} human rounds revealed`,
+            )}
+          </small>
         </div>
         <div>
-          <span>完成 / 取消</span>
+          <span>{t("完成 / 取消", "Completed / ended")}</span>
           <strong>
             {stats.completed}
             <i> / {stats.cancelled}</i>
           </strong>
-          <small>只把已揭晓的局计入比率</small>
+          <small>
+            {t("只把已揭晓的局计入比率", "Rates include revealed games only")}
+          </small>
         </div>
       </div>
       {rooms.length > 0 ? (
         <details className="play-history">
           <summary>
-            最近的游戏 <ChevronDown size={16} />
+            {t("最近的游戏", "Recent games")}
+            <ChevronDown size={16} />
           </summary>
           <div>
             {rooms.map((room) => (
               <article className="play-history-row" key={room.id}>
                 <div>
-                  <strong>{room.friendName || "尚未加入的朋友"}</strong>
+                  <strong>
+                    {room.friendName ||
+                      t("尚未加入的朋友", "Waiting for a friend")}
+                  </strong>
                   <span>
                     {room.status === "REVEALED"
-                      ? `${room.mode === "HUMAN" ? "本人" : "AI"}局 · ${room.result?.correct ? "猜对了" : "猜错了"}`
+                      ? t(
+                          `${room.mode === "HUMAN" ? "本人" : "AI"}局 · ${room.result?.correct ? "猜对了" : "猜错了"}`,
+                          `${room.mode === "HUMAN" ? "Human" : "AI"} · ${room.result?.correct ? "Correct guess" : "Incorrect guess"}`,
+                        )
                       : room.status === "CANCELLED"
-                        ? "已取消"
-                        : "进行中"}
+                        ? t("已取消", "Ended")
+                        : t("进行中", "In progress")}
                   </span>
                 </div>
                 {room.result?.reason && <p>“{room.result.reason}”</p>}
@@ -1024,7 +1417,10 @@ function Stats({
         </details>
       ) : (
         <div className="play-stats-empty">
-          第一局揭晓后，这里就会留下朋友的答案和理由。
+          {t(
+            "第一局揭晓后，这里就会留下朋友的答案和理由。",
+            "Your friends' answers and reasoning will appear after the first reveal.",
+          )}
         </div>
       )}
     </section>
@@ -1032,7 +1428,9 @@ function Stats({
 }
 
 export function HostPlayApp() {
+  const { t } = useLanguage();
   const [home, setHome] = useState<PlayHomeDto | null>(null);
+  const [deleted, setDeleted] = useState(false);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1060,6 +1458,7 @@ export function HostPlayApp() {
   }, []);
   useEffect(() => {
     mounted.current = true;
+    if (deleted) return;
     void refresh();
     const timer = setInterval(() => {
       if (!actionLock.current && readPending.current === 0) void refresh();
@@ -1068,7 +1467,7 @@ export function HostPlayApp() {
       mounted.current = false;
       clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, deleted]);
   useEffect(() => {
     if (!home?.actor || !home.online) return;
     const timer = setInterval(() => {
@@ -1114,6 +1513,50 @@ export function HostPlayApp() {
       setBusy(false);
     }
   }
+  async function deleteAccount() {
+    if (actionLock.current) throw new Error("ACTION_BUSY");
+    actionLock.current = true;
+    ++fetchVersion.current;
+    setBusy(true);
+    try {
+      await heartbeatPending.current;
+      await action("delete_account");
+      try {
+        for (const room of [
+          ...(home?.recentRooms || []),
+          ...(home?.activeRoom ? [home.activeRoom] : []),
+        ]) {
+          sessionStorage.removeItem(`self-play-invite:${room.id}`);
+        }
+      } catch {
+        /* Optional local invitation cache. */
+      }
+      setHome(null);
+      setInviteUrl("");
+      setDeleted(true);
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
+  if (deleted)
+    return (
+      <Frame compact>
+        <section className="play-card play-deleted">
+          <Check size={32} />
+          <h1>{t("账号与游戏数据已删除", "Account and game data deleted")}</h1>
+          <p>
+            {t(
+              "你已退出登录，之前的邀请已失效。",
+              "You have been signed out and previous invitations no longer work.",
+            )}
+          </p>
+          <a className="play-button play-button-primary" href="/">
+            {t("返回首页", "Back to home")}
+          </a>
+        </section>
+      </Frame>
+    );
   if (!home)
     return error ? (
       <Frame>
@@ -1147,8 +1590,8 @@ export function HostPlayApp() {
               })
             }
           >
-            <LogOut size={15} />
-            <span>退出</span>
+            <LogOut size={15} aria-hidden="true" />
+            <span className="play-signout-label">{t("退出", "Sign out")}</span>
           </button>
         </div>
       }
@@ -1157,21 +1600,32 @@ export function HostPlayApp() {
         <div>
           <span className="play-eyebrow">YOUR PLAY SPACE</span>
           <h1>
-            你的语气，朋友的直觉<span>。</span>
+            {t("你的语气，朋友的直觉", "Your voice. A friend's intuition.")}
           </h1>
-          <p>准备好分身，再邀请一位朋友聊五轮。</p>
+          <p>
+            {t(
+              "准备好分身，再邀请一位朋友聊五轮。",
+              "Prepare your persona, then invite a friend for five rounds.",
+            )}
+          </p>
         </div>
         <label className="play-online-toggle">
           <span>
-            <b>{home.online ? "我已上线" : "暂时离线"}</b>
+            <b>
+              {home.online
+                ? t("我已上线", "I'm online")
+                : t("暂时离线", "Offline")}
+            </b>
             <small>
-              {home.online ? "保持页面打开，等待朋友" : "上线后可以创建邀请"}
+              {home.online
+                ? t("保持页面打开，等待朋友", "Keep this page open")
+                : t("上线后可以创建邀请", "Go online to create an invite")}
             </small>
           </span>
           <input
             type="checkbox"
             role="switch"
-            aria-label="主持人在线状态"
+            aria-label={t("主持人在线状态", "Host online status")}
             checked={home.online}
             disabled={busy || Boolean(home.activeRoom)}
             onChange={(event) => {
@@ -1186,49 +1640,13 @@ export function HostPlayApp() {
       </div>
       {error && <Notice text={error} error retry={() => void refresh()} />}
       {actionError && <Notice text={actionError} error />}
-      {(!home.providerReady || home.providerStatus?.kind === "ollama") && (
-        <div className="play-config-notice">
-          <div>
-            <span className="play-badge">
-              {home.providerStatus?.kind === "compatible"
-                ? "模型接口"
-                : "本地模型"}
-            </span>
-            <h2>
-              {home.providerReady
-                ? "本地运行，聊天由这台电脑处理。"
-                : "启动模型，就能开始真实的盲测。"}
-            </h2>
-            <p>
-              {home.providerStatus?.message ||
-                "启动本地模型后，这里会自动连接。"}
-            </p>
-            {!home.providerReady && (
-              <>
-                <p>
-                  {home.providerStatus?.kind === "compatible"
-                    ? "在项目本地 .env 中完成配置后重启服务；密钥不需要填写到网页中。"
-                    : "首次运行准备命令，之后启动本地模型；无需 API 密钥。就绪后即可创建邀请。"}
-                </p>
-                <div className="play-config-vars">
-                  {home.providerStatus?.kind === "compatible" ? (
-                    <>
-                      <code>PLAY_MODEL_BASE_URL</code>
-                      <code>PLAY_MODEL_API_KEY</code>
-                      <code>PLAY_MODEL_NAME</code>
-                    </>
-                  ) : (
-                    <>
-                      <code>npm run model:setup</code>
-                      <code>npm run model:start</code>
-                    </>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-          <Sparkles size={35} strokeWidth={1.1} />
-        </div>
+      {!home.providerReady && (
+        <Notice
+          text={t(
+            "AI 暂时不可用，恢复后即可创建邀请。请稍后重试。",
+            "AI is temporarily unavailable. You can create an invitation once it recovers. Please try again shortly.",
+          )}
+        />
       )}
       <div
         className={`play-dashboard-grid${home.activeRoom ? " has-room" : ""}`}
@@ -1254,14 +1672,20 @@ export function HostPlayApp() {
                 <MessageCircle size={40} strokeWidth={1.15} />
               </div>
               <h2>
-                找一个认识你的人，
+                {t("找一个认识你的人，", "Invite someone who knows you.")}
                 <br />
-                试试看。
+                {t("试试看。", "See what happens.")}
               </h2>
               <p>
-                每局随机由你本人或 AI 回复。
+                {t(
+                  "每局随机由你本人或 AI 回复。",
+                  "Each game randomly assigns replies to you or AI.",
+                )}
                 <br />
-                一次一个朋友，一共五轮对话。
+                {t(
+                  "一次一个朋友，一共五轮对话。",
+                  "One friend, five rounds of conversation.",
+                )}
               </p>
               <button
                 className="play-button play-button-primary play-full"
@@ -1289,16 +1713,27 @@ export function HostPlayApp() {
                 ) : (
                   <Plus size={17} />
                 )}
-                {busy ? "正在创建…" : "创建一局，生成邀请"}
+                {busy
+                  ? t("正在创建…", "Creating…")
+                  : t("创建一局，生成邀请", "Create invitation")}
               </button>
               <p className="play-start-hint">
                 {!home.providerReady
-                  ? "先完成模型配置，即可开局。"
+                  ? t(
+                      "等待 AI 就绪后即可开局。",
+                      "Waiting for AI to become available.",
+                    )
                   : !home.persona
-                    ? "先保存左侧分身资料，即可开局。"
+                    ? t("先保存分身资料。", "Save your persona first.")
                     : !home.online
-                      ? "打开上方在线开关，即可开局。"
-                      : "邀请创建后，请保持此页面在线。"}
+                      ? t(
+                          "打开上方在线开关。",
+                          "Switch your status to online above.",
+                        )
+                      : t(
+                          "邀请创建后，请保持此页面在线。",
+                          "Keep this page open after creating an invitation.",
+                        )}
               </p>
             </section>
           )}
@@ -1310,12 +1745,7 @@ export function HostPlayApp() {
           />
         </div>
       </div>
-      <div className="play-legacy-links">
-        <span>原有研究流程</span>
-        <a href="/research">研究端</a>
-        <a href="/target">本人参与端</a>
-        <a href="/friend">好友参与端</a>
-      </div>
+      <DeleteControl account disabled={busy} onDelete={deleteAccount} />
     </Frame>
   );
 }
@@ -1323,6 +1753,7 @@ export function HostPlayApp() {
 const JOIN_TOKEN_KEY = "self-play-pending-invitation";
 
 export function JoinPlayApp() {
+  const { t } = useLanguage();
   const [invitation, setInvitation] = useState<PlayInvitationDto | null>(null);
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
@@ -1352,7 +1783,7 @@ export function JoinPlayApp() {
       );
     setToken(pending);
     if (!pending) {
-      setError("这里需要一条完整的游戏邀请。请向朋友要邀请链接，再打开一次。");
+      setError("INVITATION_MISSING");
       setLoading(false);
       return;
     }
@@ -1409,34 +1840,53 @@ export function JoinPlayApp() {
         {loading ? (
           <div className="play-join-loading">
             <LoaderCircle className="play-spin" size={22} />
-            <p>正在打开邀请…</p>
+            <p>{t("正在打开邀请…", "Opening invitation…")}</p>
           </div>
         ) : invitation ? (
           <>
             <h1>
-              {invitation.hostName}邀请你，
-              <br />
-              猜猜是谁在回复。
+              {t(
+                `${invitation.hostName} 邀请你，猜猜是谁在回复。`,
+                `${invitation.hostName} invites you to guess: human or AI?`,
+              )}
             </h1>
             <p className="play-muted">
-              可能是本人，也可能是模仿本人的 AI。
+              {t(
+                "可能是本人，也可能是模仿本人的 AI。",
+                "You may be talking to your friend, or an AI imitating them.",
+              )}
               <br />
-              五轮对话后，选出你的答案。
+              {t(
+                "五轮对话后，选出你的答案。",
+                "After five rounds, make your guess.",
+              )}
             </p>
             <div className="play-join-rules">
               <span>
-                01<span>说一句，等一句回复</span>
+                01
+                <span>
+                  {t("说一句，等一句回复", "Send a message, wait for a reply")}
+                </span>
               </span>
               <span>
-                02<span>聊满五轮，凭直觉判断</span>
+                02
+                <span>
+                  {t(
+                    "聊满五轮，凭直觉判断",
+                    "Chat for five rounds, then guess",
+                  )}
+                </span>
               </span>
               <span>
-                03<span>揭晓答案，留下一点理由</span>
+                03
+                <span>
+                  {t("揭晓答案，留下一点理由", "Reveal the answer and reflect")}
+                </span>
               </span>
             </div>
             <form className="play-form" onSubmit={join}>
               <label>
-                朋友认识的昵称
+                {t("游戏化名（非实名）", "Game alias (not your real name)")}
                 <input
                   value={nickname}
                   onChange={(event) => setNickname(event.target.value)}
@@ -1444,7 +1894,10 @@ export function JoinPlayApp() {
                   required
                   disabled={busy}
                   autoComplete="nickname"
-                  placeholder="让朋友认得出你"
+                  placeholder={t(
+                    "请勿使用真实姓名或可识别身份的昵称",
+                    "Choose an alias that does not identify you",
+                  )}
                 />
               </label>
               <label className="play-consent">
@@ -1456,8 +1909,13 @@ export function JoinPlayApp() {
                   disabled={busy}
                 />
                 <span>
-                  我知道这是一场本人 / AI 猜测游戏，同意保存本局对话与判断；AI
-                  局的消息会由模型服务处理。我可以随时退出。
+                  {t(
+                    "我同意将对话与判断用于人机交互（HCI）实验和分析，AI 局消息由模型处理。个人信息不公开，分析后清理；可随时退出，有效会话内可自行删除本局。",
+                    "I agree to my chat and guess being used for this HCI experiment and analysis. AI-game messages are processed by a model. Personal information is not public; data is cleared after analysis. I can leave at any time and delete the game while my session is valid.",
+                  )}
+                  <a href="/privacy">
+                    {t("阅读隐私说明", "Read the privacy notice")}
+                  </a>
                 </span>
               </label>
               {error && <Notice text={error} error />}
@@ -1470,13 +1928,17 @@ export function JoinPlayApp() {
                 ) : (
                   <ArrowRight size={17} />
                 )}
-                {busy ? "正在加入…" : "开始五轮聊天"}
+                {busy
+                  ? t("正在加入…", "Joining…")
+                  : t("开始五轮聊天", "Start chatting")}
               </button>
             </form>
           </>
         ) : (
           <>
-            <h1>这次邀请暂时无法打开</h1>
+            <h1>
+              {t("这次邀请暂时无法打开", "This invitation could not be opened")}
+            </h1>
             <Notice
               text={error}
               error
@@ -1496,7 +1958,10 @@ export function JoinPlayApp() {
               }
             />
             <p className="play-muted">
-              请朋友确认邀请仍然有效，并重新发送完整链接。
+              {t(
+                "请朋友确认邀请仍然有效，并重新发送完整链接。",
+                "Ask your friend to check the invitation and send the full link again.",
+              )}
             </p>
           </>
         )}
@@ -1506,15 +1971,19 @@ export function JoinPlayApp() {
 }
 
 export function FriendPlayRoom({ roomId }: { roomId: string }) {
+  const { t } = useLanguage();
   const [room, setRoom] = useState<PlayRoomDto | null>(null);
+  const [deleted, setDeleted] = useState(false);
+  const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState("");
   const requestVersion = useRef(0);
   const readPending = useRef(0);
   const mounted = useRef(true);
   const mutation = useRef(false);
+  const deletedRef = useRef(false);
   const lastSend = useRef<{ text: string; key: string } | null>(null);
   const refresh = useCallback(async () => {
-    if (mutation.current) return;
+    if (mutation.current || deletedRef.current) return;
     const version = ++requestVersion.current;
     readPending.current += 1;
     try {
@@ -1540,16 +2009,19 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
     };
   }, [refresh]);
   useEffect(() => {
-    if (room?.status === "REVEALED" || room?.status === "CANCELLED") return;
+    if (deleted || room?.status === "REVEALED" || room?.status === "CANCELLED")
+      return;
     const timer = setInterval(() => {
       if (readPending.current === 0) void refresh();
     }, 2000);
     return () => clearInterval(timer);
-  }, [refresh, room?.status]);
+  }, [refresh, room?.status, deleted]);
   async function send(text: string) {
+    if (mutation.current) throw new Error("ACTION_BUSY");
     if (!lastSend.current || lastSend.current.text !== text)
       lastSend.current = { text, key: crypto.randomUUID() };
     mutation.current = true;
+    setIsMutating(true);
     ++requestVersion.current;
     try {
       const result = await action<{ room: PlayRoomDto }>("send_message", {
@@ -1562,10 +2034,13 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
       lastSend.current = null;
     } finally {
       mutation.current = false;
+      setIsMutating(false);
     }
   }
   async function leave() {
+    if (mutation.current) throw new Error("ACTION_BUSY");
     mutation.current = true;
+    setIsMutating(true);
     ++requestVersion.current;
     try {
       const result = await action<{ room: PlayRoomDto }>("leave", { roomId });
@@ -1573,12 +2048,69 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
       setError("");
     } finally {
       mutation.current = false;
+      setIsMutating(false);
     }
   }
+  async function deleteData() {
+    if (mutation.current) throw new Error("ACTION_BUSY");
+    mutation.current = true;
+    setIsMutating(true);
+    ++requestVersion.current;
+    try {
+      await action("delete_data", { roomId });
+      deletedRef.current = true;
+      setDeleted(true);
+      setRoom(null);
+      setError("");
+    } finally {
+      mutation.current = false;
+      setIsMutating(false);
+    }
+  }
+  async function makeGuess(guess: PlayIdentity, reason: string) {
+    if (mutation.current) throw new Error("ACTION_BUSY");
+    mutation.current = true;
+    setIsMutating(true);
+    ++requestVersion.current;
+    try {
+      const result = await action<{ room: PlayRoomDto }>("guess", {
+        roomId,
+        guess,
+        reason,
+      });
+      setRoom(result.room);
+      setError("");
+    } finally {
+      mutation.current = false;
+      setIsMutating(false);
+    }
+  }
+  if (deleted)
+    return (
+      <Frame compact>
+        <section className="play-card play-deleted">
+          <Check size={32} />
+          <h1>{t("本局数据已删除", "Game data deleted")}</h1>
+          <p>
+            {t(
+              "本局双方的聊天和判断结果已删除，房间已关闭。",
+              "Both participants' messages and the guess have been deleted. This room is now closed.",
+            )}
+          </p>
+          <a className="play-button play-button-primary" href="/">
+            {t("返回首页", "Back to home")}
+          </a>
+        </section>
+      </Frame>
+    );
   return (
     <Frame
       compact
-      side={<span className="play-room-top-note">五轮之后，答案见</span>}
+      side={
+        <span className="play-room-top-note">
+          {t("五轮之后，答案见", "Five rounds, then the reveal")}
+        </span>
+      }
     >
       <section className="play-card play-friend-room">
         {room ? (
@@ -1592,10 +2124,13 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
                   <h1>{room.hostName}</h1>
                   <p>
                     {room.status === "REVEALED"
-                      ? "这一次，答案已揭晓"
+                      ? t("这一次，答案已揭晓", "The answer is revealed")
                       : room.status === "CANCELLED"
-                        ? "本局已结束"
-                        : "像平常一样，聊点什么"}
+                        ? t("本局已结束", "This game has ended")
+                        : t(
+                            "像平常一样，聊点什么",
+                            "Chat as you normally would",
+                          )}
                   </p>
                 </div>
               </div>
@@ -1607,43 +2142,51 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
             <Conversation room={room} />
             {room.status === "ACTIVE" && (
               <Composer
-                disabled={room.waitingFor !== "FRIEND"}
+                disabled={isMutating || room.waitingFor !== "FRIEND"}
                 hint={
                   room.waitingFor === "FRIEND"
-                    ? "你想说点什么…"
-                    : "等待回复后，继续下一轮"
+                    ? t("你想说点什么…", "What would you like to say…")
+                    : t(
+                        "等待回复后，继续下一轮",
+                        "Wait for a reply before the next round",
+                      )
                 }
                 onSend={send}
               />
             )}
             {room.status === "WAITING" && (
-              <Notice text="聊天正在准备，请稍等片刻。" />
+              <Notice
+                text={t(
+                  "聊天正在准备，请稍等片刻。",
+                  "Getting your conversation ready. Please wait.",
+                )}
+              />
             )}
             {room.status === "GUESSING" && (
-              <Guess
-                room={room}
-                onGuessed={(result) => {
-                  ++requestVersion.current;
-                  setRoom(result);
-                  setError("");
-                }}
-              />
+              <Guess disabled={isMutating} onGuess={makeGuess} />
             )}
             {room.status === "REVEALED" && <Result room={room} />}
             {room.status === "CANCELLED" && (
               <div className="play-ended">
                 <span className="play-eyebrow">THIS ROUND HAS ENDED</span>
-                <h2>这一局，到这里结束。</h2>
+                <h2>{t("这一局，到这里结束。", "This game has ended.")}</h2>
                 <p>
-                  本局没有完成，因此不会揭晓身份。
+                  {t(
+                    "本局没有完成，因此不会揭晓身份。",
+                    "The game was not completed, so the identity stays hidden.",
+                  )}
                   <br />
-                  想再聊一局，可以向朋友要一条新邀请。
+                  {t(
+                    "想再聊一局，可以向朋友要一条新邀请。",
+                    "Ask your friend for a new invitation to play again.",
+                  )}
                 </p>
               </div>
             )}
             {room.status !== "REVEALED" && room.status !== "CANCELLED" && (
               <CancelButton friend onCancel={leave} />
             )}
+            <DeleteControl disabled={isMutating} onDelete={deleteData} />
           </>
         ) : (
           <div className="play-loading">
@@ -1652,7 +2195,7 @@ export function FriendPlayRoom({ roomId }: { roomId: string }) {
             ) : (
               <>
                 <LoaderCircle className="play-spin" size={24} />
-                <p>正在打开对话…</p>
+                <p>{t("正在打开对话…", "Opening the conversation…")}</p>
               </>
             )}
           </div>

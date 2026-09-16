@@ -2,14 +2,10 @@ import "dotenv/config";
 import { createServer, type IncomingMessage } from "node:http";
 import next from "next";
 import { Server } from "socket.io";
-import { getActor } from "./src/server/auth";
-import {
-  allowedOrigin,
-  enforceRateLimit,
-  isAllowedOrigin,
-} from "./src/server/http";
-import { getSession, processDeliveries } from "./src/server/engine";
-import { prisma } from "./src/server/db";
+import { getActor } from "./auth";
+import { allowedOrigin, enforceRateLimit, isAllowedOrigin } from "./http";
+import { getSession, processDeliveries } from "./engine";
+import { prisma } from "./db";
 
 process.env.NEXT_TELEMETRY_DISABLED = "1";
 

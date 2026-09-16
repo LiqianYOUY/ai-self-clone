@@ -7,14 +7,14 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
-import type { PlayIdentity, PlayRoomDto } from "../src/domain/play";
+import type { PlayIdentity, PlayRoomDto } from "../../src/domain/play";
 
 type Data = Record<string, any>;
 type Cookie = { value: string; path: string; expiresAt: number | null };
 type Jar = Map<string, Cookie>;
 const port = 3305;
 const origin = `http://127.0.0.1:${port}`;
-const buildDirectory = ".next-build";
+const buildDirectory = process.env.PLAY_SMOKE_BUILD_DIR ?? ".cache/production";
 const schema = `play_http_${process.pid}_${randomBytes(5).toString("hex")}`;
 const username = `play_smoke_${randomBytes(6).toString("hex")}`;
 const password = randomBytes(24).toString("base64url");
@@ -365,7 +365,7 @@ async function playGame(mode: PlayIdentity, ownerId: string) {
 }
 
 async function main() {
-  stage = "production build (.next-build/BUILD_ID)";
+  stage = "production build (BUILD_ID)";
   assert(
     existsSync(resolve(buildDirectory, "BUILD_ID")),
     "Build the production app first",
@@ -448,7 +448,7 @@ async function main() {
   stage = "migrate disposable schema";
   await migrate(env);
   stage = "start isolated production HTTP server";
-  server = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
+  server = spawn(process.execPath, ["--import", "tsx", "src/server/main.ts"], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -597,11 +597,20 @@ async function cleanup() {
 process.once("SIGINT", () => abort.abort());
 process.once("SIGTERM", () => abort.abort());
 main()
-  .catch(() => {
+  .catch((error: unknown) => {
     // Never print DB credentials, cookies, invitation tokens, request bodies or model text.
     console.error(
       `Play HTTP smoke failed during: ${stage}. AI is never skipped when unavailable.`,
     );
+    // Stack locations identify the failed check without printing assertion
+    // values, response bodies, credentials or model output.
+    if (error instanceof Error) {
+      const locations = error.stack
+        ?.split("\n")
+        .filter((line) => /^\s+at /.test(line))
+        .slice(0, 5);
+      if (locations?.length) console.error(locations.join("\n"));
+    }
     process.exitCode = 1;
   })
   .finally(async () => {

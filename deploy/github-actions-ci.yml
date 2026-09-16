@@ -27,7 +27,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://study_test:ci-disposable-password@127.0.0.1:5432/clone_study_test
       STUDY_MODE: synthetic
-      NEXT_DIST_DIR: .next-build
+      NEXT_DIST_DIR: .cache/production
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4

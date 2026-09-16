@@ -114,6 +114,9 @@ function expiredRoomWhere(now: Date): Prisma.PlayRoomWhereInput {
       },
       {
         pendingSince: {
+          // This filter is also negated by getPlayHome. SQL NOT must treat a
+          // room with no pending reply as unexpired rather than UNKNOWN.
+          not: null,
           lte: new Date(now.getTime() - PLAY_REPLY_TIMEOUT_MS),
         },
       },
@@ -138,7 +141,7 @@ async function expireRooms(tx: Tx) {
 
 async function requireHost(tx: Tx, actor: Actor) {
   requireValue(
-    actor?.role === "TARGET" && !actor.id.startsWith("demo-"),
+    actor?.role === "TARGET" && actor.id.startsWith("play-target-"),
     "FORBIDDEN",
     403,
   );
@@ -727,4 +730,110 @@ export async function leavePlayRoom(guest: PlayGuest) {
   return mutation(async (tx) => ({
     room: publicRoom(await cancelRoom(tx, await guestRoom(tx, guest))),
   }));
+}
+
+/** Erasure shares both account and game locks, without updating other rooms. */
+async function deletion<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(70624003)::text`;
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(70624004)::text`;
+      return fn(tx);
+    },
+    { maxWait: 10000, timeout: 30000 },
+  );
+}
+
+/** A room capability authorizes erasing that entire conversation, even after it ends. */
+export async function deletePlayData(guest: PlayGuest) {
+  checked(roomIdSchema, guest.roomId);
+  checked(tokenSchema, guest.tokenHash);
+  return deletion(async (tx) => {
+    const room = await tx.playRoom.findUnique({
+      where: { id: guest.roomId },
+      select: { guestHash: true },
+    });
+    // Replaying a capability after deletion is successful without revealing
+    // whether an absent room ever existed. Existing rooms still require its hash.
+    if (!room) return { deleted: true };
+    requireValue(room.guestHash === guest.tokenHash, "NOT_FOUND", 404);
+    // Cascades remove every message; the room owns its snapshot, names, tokens
+    // and guess reason. Pending generators only update an existing claimed room.
+    await tx.playRoom.delete({ where: { id: guest.roomId } });
+    return { deleted: true };
+  });
+}
+
+function playAccountAuditWhere(ids: string[]): Prisma.AuditEventWhereInput {
+  return {
+    OR: [
+      { actorId: { in: ids } },
+      { entityType: "Participant", entityId: { in: ids } },
+    ],
+  };
+}
+
+/** Self-service erasure is limited to accounts created by the five-round game. */
+export async function deletePlayAccount(actor: Actor) {
+  requireValue(
+    actor?.role === "TARGET" && actor.id.startsWith("play-target-"),
+    "FORBIDDEN",
+    403,
+  );
+  return deletion(async (tx) => {
+    const owner = await tx.participant.findUnique({
+      where: { id: actor.id },
+      include: { account: true },
+    });
+    // Concurrent requests may both authenticate before the first erasure commits.
+    if (!owner) return { deleted: true };
+    requireValue(
+      owner.active && owner.role === "TARGET" && owner.account,
+      "FORBIDDEN",
+      403,
+    );
+    await tx.auditEvent.deleteMany({
+      where: playAccountAuditWhere([actor.id]),
+    });
+    // Database cascades erase the persona, all rooms/messages, account/password
+    // hash and every login session. No tombstone or registration identifier stays.
+    await tx.participant.delete({ where: { id: actor.id } });
+    return { deleted: true };
+  });
+}
+
+/** Administrative end-of-analysis erasure. No HTTP route exposes this function. */
+export async function purgePlayData(confirm = false) {
+  return deletion(async (tx) => {
+    const participants = await tx.participant.findMany({
+      where: { id: { startsWith: "play-target-" }, role: "TARGET" },
+      select: { id: true },
+    });
+    const ids = participants.map(({ id }) => id);
+    const owner = { ownerId: { in: ids } };
+    const audit = playAccountAuditWhere(ids);
+    const [personas, rooms, messages, accounts, sessions, auditEvents] =
+      await Promise.all([
+        tx.playPersona.count({ where: owner }),
+        tx.playRoom.count({ where: owner }),
+        tx.playMessage.count({ where: { room: owner } }),
+        tx.account.count({ where: { participantId: { in: ids } } }),
+        tx.authSession.count({ where: { participantId: { in: ids } } }),
+        tx.auditEvent.count({ where: audit }),
+      ]);
+    if (confirm) {
+      await tx.auditEvent.deleteMany({ where: audit });
+      await tx.participant.deleteMany({ where: { id: { in: ids } } });
+    }
+    return {
+      dryRun: !confirm,
+      participants: ids.length,
+      personas,
+      rooms,
+      messages,
+      accounts,
+      sessions,
+      auditEvents,
+    };
+  });
 }

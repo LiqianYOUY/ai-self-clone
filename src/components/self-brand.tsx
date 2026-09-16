@@ -1,6 +1,11 @@
+"use client";
+
+import { useLanguage } from "./language-provider";
+
 export function SelfBrand() {
+  const { t } = useLanguage();
   return (
-    <a href="/" className="play-brand" aria-label="Self 首页">
+    <a href="/" className="play-brand" aria-label={t("Self 首页", "Self home")}>
       <svg
         className="play-mark"
         viewBox="0 0 40 40"
@@ -24,7 +29,9 @@ export function SelfBrand() {
         />
       </svg>
       <span className="play-brand-wordmark">self</span>
-      <span className="play-brand-tagline">猜猜我是谁</span>
+      <span className="play-brand-tagline">
+        {t("猜猜我是谁", "Human or AI?")}
+      </span>
     </a>
   );
 }

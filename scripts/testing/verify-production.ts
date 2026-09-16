@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-const buildDir = process.env.NEXT_DIST_DIR ?? ".next-build";
+const buildDir = process.env.NEXT_DIST_DIR ?? ".cache/production";
 async function files(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   return (
@@ -58,19 +58,23 @@ async function main() {
     `postgresql://study_local:${encodeURIComponent(password)}@127.0.0.1:55432/clone_study?schema=public`;
   const port = 3300;
   const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(process.execPath, ["--import", "tsx", "server.ts"], {
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      STUDY_MODE: "synthetic",
-      DATABASE_URL: databaseUrl,
-      APP_HOST: "127.0.0.1",
-      APP_ORIGIN: origin,
-      PORT: String(port),
-      NEXT_DIST_DIR: buildDir,
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", "src/server/main.ts"],
+    {
+      env: {
+        ...process.env,
+        NODE_ENV: "production",
+        STUDY_MODE: "synthetic",
+        DATABASE_URL: databaseUrl,
+        APP_HOST: "127.0.0.1",
+        APP_ORIGIN: origin,
+        PORT: String(port),
+        NEXT_DIST_DIR: buildDir,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  );
   try {
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(

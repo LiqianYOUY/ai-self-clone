@@ -5,24 +5,29 @@
   "description": "Consent-aware AI self-clone research platform",
   "scripts": {
     "dev": "node --import tsx scripts/start-local.ts",
-    "dev:app": "node --import tsx server.ts",
+    "dev:app": "node --import tsx src/server/main.ts",
     "model:setup": "node --import tsx scripts/setup-local-model.ts",
     "model:start": "node --import tsx scripts/start-local-model.ts",
     "build": "prisma generate && next build --webpack",
-    "start": "NODE_ENV=production node --import tsx server.ts",
+    "start": "NODE_ENV=production node --import tsx src/server/main.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "node --import tsx scripts/seed.ts",
+    "data:purge": "node --import tsx scripts/purge-play-data.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/domain.test.ts tests/runtime-gateway.test.ts tests/portal-auth.test.ts tests/portal-gateway.test.ts",
     "test:kernel": "node --import tsx --test tests/kernel.test.ts",
     "test:evaluation": "node --import tsx --test tests/evaluation.test.ts",
-    "test:runtime": "node --import tsx scripts/smoke-runtime.ts",
+    "test:runtime": "node --import tsx scripts/testing/smoke-runtime.ts",
     "test:portals": "node --import tsx --test tests/portals.test.ts",
     "test:play": "node --import tsx --test tests/play.test.ts tests/play-provider.test.ts tests/play-gateway.test.ts",
-    "test:portals:http": "node --import tsx scripts/smoke-portals.ts",
+    "test:portals:http": "node --import tsx scripts/testing/smoke-portals.ts",
     "test:all": "node --import tsx --test tests/*.test.ts",
-    "verify:production": "node --import tsx scripts/verify-production.ts"
+    "verify:production": "node --import tsx scripts/testing/verify-production.ts",
+    "build:isolated": "NEXT_DIST_DIR=.cache/production npm run build",
+    "test:isolated": "node --import tsx scripts/testing/run-isolated.ts",
+    "clean": "node scripts/clean.mjs",
+    "start:local": "NODE_ENV=production node --import tsx scripts/start-local.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
@@ -35,14 +40,14 @@
     "socket.io-client": "4.8.3",
     "zod": "4.5.4",
     "tsx": "4.23.13",
-    "prisma": "6.19.3"
+    "prisma": "6.19.3",
+    "embedded-postgres": "18.4.0-beta.17"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.4.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
-    "embedded-postgres": "18.4.0-beta.17",
     "prettier": "3.9.6",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2"

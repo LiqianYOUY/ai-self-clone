@@ -30,6 +30,22 @@ const persona = {
   examplesText: "朋友：今天吃啥\n我：随便整点面吧",
 };
 type Guest = { roomId: string; tokenHash: string };
+const gameOrigin = "http://127.0.0.1:3000";
+const gameRequest = (action: string, payload: unknown, cookie = "") =>
+  new Request(gameOrigin + "/api/play", {
+    method: "POST",
+    headers: { origin: gameOrigin, "content-type": "application/json", cookie },
+    body: JSON.stringify({ action, payload }),
+  });
+async function hostCookie(actor: Actor) {
+  const { createPortalSession } = await import("../src/server/auth");
+  const response = await createPortalSession(
+    new Request(gameOrigin),
+    "target",
+    actor,
+  );
+  return response.headers.getSetCookie()[0].split(";")[0];
+}
 const rejectsCode = (promise: Promise<unknown>, code: string) =>
   assert.rejects(
     promise,
@@ -492,6 +508,58 @@ test("host timeout cancels both identities with the same public state", async ()
   }
 });
 
+test("host polling retains waiting and active rooms with null or unexpired pending timestamps", async () => {
+  for (const mode of ["HUMAN", "AI"] as const) {
+    const actor = await host();
+    const created = await api.createPlayRoom(actor);
+    const roomId = created.room.id;
+    await db.playRoom.update({ where: { id: roomId }, data: { mode } });
+    const token = new URL(created.url).hash.split("token=")[1];
+    async function visible(status: "WAITING" | "ACTIVE", pending: boolean) {
+      const stored = await db.playRoom.findUniqueOrThrow({
+        where: { id: roomId },
+      });
+      assert.equal(stored.pendingSince !== null, pending);
+      const home = await api.getPlayHome(actor);
+      assert.ok(home.activeRoom, `${mode} ${status} pending=${pending}`);
+      assert.equal(home.activeRoom.id, roomId);
+      assert.equal(home.activeRoom.status, status);
+      assert.equal(home.activeRoom.mode, mode);
+      assert.equal(
+        home.activeRoom.waitingFor,
+        status === "WAITING" ? null : pending ? "SOURCE" : "FRIEND",
+      );
+      assert.deepEqual(home.recentRooms, []);
+      assert.equal(home.stats.cancelled, 0);
+      assert.deepEqual(
+        await db.playRoom.findUniqueOrThrow({ where: { id: roomId } }),
+        stored,
+      );
+    }
+    await visible("WAITING", false);
+    const joined = await api.joinPlayRoom({
+      token,
+      nickname: "朋友",
+      consent: true,
+    });
+    const guest: Guest = { roomId, tokenHash: digest(joined.guestToken) };
+    await visible("ACTIVE", false);
+    await api.sendPlayMessage(guest, {
+      text: "周末去哪里？",
+      idempotencyKey: randomUUID(),
+    });
+    await visible("ACTIVE", true);
+    if (mode === "HUMAN")
+      await api.replyPlayRoom(actor, {
+        roomId,
+        text: "海边走走呗",
+        idempotencyKey: randomUUID(),
+      });
+    else await api.runPendingPlayReply(roomId);
+    await visible("ACTIVE", false);
+  }
+});
+
 test("polling reads expire rooms without waiting for the transition lock or writing", async () => {
   const { actor, guest } = await room("AI");
   await api.sendPlayMessage(guest, {
@@ -752,5 +820,521 @@ test("statistics use separate AI/human denominators and exclude cancellations", 
     humanRounds: 1,
     aiFooledRate: 0.5,
     humanRecognizedRate: 1,
+  });
+});
+
+test("a friend's deletion erases only their room and messages, clears only its cookie, and is replay-safe", async () => {
+  const route = await import("../src/app/api/play/route");
+  const first = await complete("HUMAN");
+  await api.guessPlayRoom(first.guest, {
+    guess: "HUMAN",
+    reason: "私人的判断理由",
+  });
+  const other = await room("HUMAN", first.actor);
+  await api.sendPlayMessage(other.guest, {
+    text: "另一局保留",
+    idempotencyKey: randomUUID(),
+  });
+  const retained = await db.playRoom.findUniqueOrThrow({
+    where: { id: other.guest.roomId },
+    include: { messages: true },
+  });
+  const guestCookie = `play_guest_${first.guest.roomId}=${first.joined.guestToken}`;
+  const cookie = `${guestCookie}; play_guest_${other.guest.roomId}=${other.joined.guestToken}; ${await hostCookie(first.actor)}`;
+
+  const foreign = await route.POST(
+    gameRequest(
+      "delete_data",
+      { roomId: other.guest.roomId },
+      `play_guest_${other.guest.roomId}=${first.joined.guestToken}`,
+    ),
+  );
+  assert.equal(foreign.status, 404);
+  assert.equal(
+    await db.playRoom.count({
+      where: { id: { in: [first.guest.roomId, other.guest.roomId] } },
+    }),
+    2,
+  );
+
+  for (let retry = 0; retry < 2; retry++) {
+    const response = await route.POST(
+      gameRequest("delete_data", { roomId: first.guest.roomId }, cookie),
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { deleted: true });
+    const cleared = response.headers.getSetCookie();
+    assert.equal(cleared.length, 1);
+    assert.equal(
+      cleared[0],
+      `play_guest_${first.guest.roomId}=; Path=/api/play; HttpOnly; SameSite=Strict; Max-Age=0`,
+    );
+  }
+  assert.equal(
+    await db.playRoom.findUnique({ where: { id: first.guest.roomId } }),
+    null,
+  );
+  assert.equal(
+    await db.playMessage.count({ where: { roomId: first.guest.roomId } }),
+    0,
+  );
+  await rejectsCode(api.getPlayRoom(first.guest), "NOT_FOUND");
+  await rejectsCode(
+    api.inspectPlayInvitation(first.token),
+    "INVITATION_INVALID",
+  );
+  assert.deepEqual(
+    await db.playRoom.findUniqueOrThrow({
+      where: { id: other.guest.roomId },
+      include: { messages: true },
+    }),
+    retained,
+  );
+  assert.ok(
+    await db.playPersona.findUnique({ where: { ownerId: first.actor.id } }),
+  );
+  assert.equal(
+    (await api.getPlayHome(first.actor)).activeRoom?.id,
+    other.guest.roomId,
+  );
+});
+
+test("account deletion authenticates the owner and erases persona, rooms, messages, credentials, sessions and registration audit IDs", async () => {
+  const route = await import("../src/app/api/play/route");
+  const portals = await import("../src/server/portals");
+  const actor = await portals.registerPlayHost({
+    username: "erase_" + randomUUID().slice(0, 16),
+    password: "synthetic-erasure-password",
+    pseudonym: "不公开的昵称",
+  });
+  await api.savePlayPersona(actor, persona);
+  const first = await complete("HUMAN", actor);
+  await api.guessPlayRoom(first.guest, {
+    guess: "HUMAN",
+    reason: "不保留的理由",
+  });
+  const next = await room("AI", actor);
+  await api.sendPlayMessage(next.guest, {
+    text: "正在等待的私聊",
+    idempotencyKey: randomUUID(),
+  });
+  const cookie = await hostCookie(actor);
+  const oldOtherSession = await hostCookie(actor);
+  assert.equal(
+    await db.authSession.count({ where: { participantId: actor.id } }),
+    2,
+  );
+  assert.equal(await db.auditEvent.count({ where: { actorId: actor.id } }), 1);
+  const preserved = await room("HUMAN");
+  const preservedRoom = await db.playRoom.findUniqueOrThrow({
+    where: { id: preserved.guest.roomId },
+  });
+
+  assert.equal(
+    (await route.POST(gameRequest("delete_account", {}))).status,
+    401,
+  );
+  assert.equal(
+    (
+      await route.POST(
+        gameRequest(
+          "delete_account",
+          { actorId: actor.id },
+          await hostCookie(preserved.actor),
+        ),
+      )
+    ).status,
+    422,
+  );
+  assert.ok(await db.participant.findUnique({ where: { id: actor.id } }));
+  const response = await route.POST(gameRequest("delete_account", {}, cookie));
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { deleted: true });
+  assert.deepEqual(response.headers.getSetCookie(), [
+    "clone_target_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+  ]);
+  assert.equal(
+    await db.participant.findUnique({ where: { id: actor.id } }),
+    null,
+  );
+  assert.equal(
+    await db.account.count({ where: { participantId: actor.id } }),
+    0,
+  );
+  assert.equal(
+    await db.authSession.count({ where: { participantId: actor.id } }),
+    0,
+  );
+  assert.equal(await db.playPersona.count({ where: { ownerId: actor.id } }), 0);
+  assert.equal(await db.playRoom.count({ where: { ownerId: actor.id } }), 0);
+  assert.equal(
+    await db.playMessage.count({
+      where: { roomId: { in: [first.guest.roomId, next.guest.roomId] } },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.auditEvent.count({
+      where: { OR: [{ actorId: actor.id }, { entityId: actor.id }] },
+    }),
+    0,
+  );
+  assert.equal(
+    (await route.POST(gameRequest("delete_account", {}, oldOtherSession)))
+      .status,
+    401,
+  );
+  assert.deepEqual(await api.deletePlayAccount(actor), { deleted: true });
+  await rejectsCode(api.getPlayRoom(first.guest), "NOT_FOUND");
+  await rejectsCode(api.getPlayRoom(next.guest), "NOT_FOUND");
+  assert.ok(
+    await db.account.findUnique({
+      where: { participantId: preserved.actor.id },
+    }),
+  );
+  assert.deepEqual(
+    await db.playRoom.findUniqueOrThrow({
+      where: { id: preserved.guest.roomId },
+    }),
+    preservedRoom,
+  );
+});
+
+test("late model completion or failure cannot recreate data after guest or account deletion", async () => {
+  for (const scope of ["guest", "account"] as const) {
+    for (const outcome of ["success", "failure"] as const) {
+      const state = await room("AI");
+      const previous = globalThis.fetch;
+      let release!: () => void;
+      let entered!: () => void;
+      const started = new Promise<void>((done) => {
+        entered = done;
+      });
+      const pending = new Promise<void>((done) => {
+        release = done;
+      });
+      let running: Promise<void> | undefined;
+      globalThis.fetch = async () => {
+        entered();
+        await pending;
+        if (outcome === "failure")
+          throw new Error("synthetic provider failure");
+        return Response.json({
+          choices: [
+            {
+              message: { content: "删除之后的迟到回复" },
+              finish_reason: "stop",
+            },
+          ],
+        });
+      };
+      try {
+        await api.sendPlayMessage(state.guest, {
+          text: "删除前的提问",
+          idempotencyKey: randomUUID(),
+        });
+        running = api.runPendingPlayReply(state.guest.roomId);
+        await started;
+        const erase = () =>
+          scope === "guest"
+            ? api.deletePlayData(state.guest)
+            : api.deletePlayAccount(state.actor);
+        assert.deepEqual(await Promise.all([erase(), erase()]), [
+          { deleted: true },
+          { deleted: true },
+        ]);
+        release();
+        await running;
+        await api.runPendingPlayReply(state.guest.roomId);
+        assert.equal(
+          await db.playRoom.findUnique({ where: { id: state.guest.roomId } }),
+          null,
+        );
+        assert.equal(
+          await db.playMessage.count({ where: { roomId: state.guest.roomId } }),
+          0,
+        );
+        assert.equal(
+          await db.participant.count({ where: { id: state.actor.id } }),
+          scope === "account" ? 0 : 1,
+        );
+      } finally {
+        release();
+        await running;
+        globalThis.fetch = previous;
+      }
+    }
+  }
+});
+
+test("game credentials cannot create a research portal session while game authentication still works", async () => {
+  const portals = await import("../src/server/portals");
+  const portalRoute = await import("../src/app/api/portal/route");
+  const playRoute = await import("../src/app/api/play/route");
+  const username = "separate_" + randomUUID().slice(0, 16);
+  const password = "synthetic-separation-password";
+  const actor = await portals.registerPlayHost({
+    username,
+    password,
+    pseudonym: "游戏匿名昵称",
+  });
+  const request = (url: string) =>
+    new Request(gameOrigin + url, {
+      method: "POST",
+      headers: {
+        origin: gameOrigin,
+        "content-type": "application/json",
+        "x-study-portal": "target",
+      },
+      body: JSON.stringify({
+        action: "login",
+        payload: { username, password },
+      }),
+    });
+  const denied = await portalRoute.POST(request("/api/portal"));
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).code, "FORBIDDEN");
+  assert.equal(denied.headers.get("set-cookie"), null);
+  assert.equal(
+    await db.authSession.count({ where: { participantId: actor.id } }),
+    0,
+  );
+  const allowed = await playRoute.POST(request("/api/play"));
+  assert.equal(allowed.status, 200);
+  assert.equal((await allowed.json()).actor.id, actor.id);
+  assert.equal(
+    await db.authSession.count({ where: { participantId: actor.id } }),
+    1,
+  );
+  assert.equal(
+    await db.consent.count({ where: { participantId: actor.id } }),
+    0,
+  );
+});
+
+test("research target credentials and sessions cannot enter the game, while their research portal still works", async () => {
+  const portals = await import("../src/server/portals");
+  const portalRoute = await import("../src/app/api/portal/route");
+  const playRoute = await import("../src/app/api/play/route");
+  const staff = await portals.initializeResearchAccount(
+    {
+      username: "boundary_admin",
+      password: "synthetic-boundary-password",
+      pseudonym: "合成研究员",
+    },
+    { localBootstrap: true },
+  );
+  const invite = await portals.createInvitation(staff, { kind: "TARGET" });
+  const credentials = {
+    username: "boundary_target",
+    password: "synthetic-target-password",
+  };
+  const actor = await portals.registerFromInvitation({
+    ...credentials,
+    token: invite.token,
+    pseudonym: "独立研究对象",
+    portal: "target",
+    consent: { participation: true, version: "enrollment-v1" },
+  });
+  assert(!actor.id.startsWith("play-target-"));
+  const denied = await playRoute.POST(gameRequest("login", credentials));
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).code, "FORBIDDEN");
+  assert.equal(denied.headers.get("set-cookie"), null);
+  assert.equal(
+    await db.authSession.count({ where: { participantId: actor.id } }),
+    0,
+  );
+  const login = await portalRoute.POST(
+    new Request(gameOrigin + "/api/portal", {
+      method: "POST",
+      headers: {
+        origin: gameOrigin,
+        "content-type": "application/json",
+        "x-study-portal": "target",
+      },
+      body: JSON.stringify({ action: "login", payload: credentials }),
+    }),
+  );
+  assert.equal(login.status, 200);
+  const cookie = login.headers.getSetCookie()[0].split(";")[0];
+  for (const view of ["me", "home"]) {
+    const response = await portalRoute.GET(
+      new Request(gameOrigin + "/api/portal?view=" + view, {
+        headers: { "x-study-portal": "target", cookie },
+      }),
+    );
+    assert.equal(response.status, 200);
+  }
+  assert.equal(
+    (
+      await playRoute.GET(
+        new Request(gameOrigin + "/api/play?view=home", {
+          headers: { cookie },
+        }),
+      )
+    ).status,
+    403,
+  );
+  for (const [action, payload] of [
+    ["save_persona", persona],
+    ["heartbeat", { online: true }],
+    ["create_room", {}],
+    ["delete_account", {}],
+  ] as const)
+    assert.equal(
+      (await playRoute.POST(gameRequest(action, payload, cookie))).status,
+      403,
+      action,
+    );
+  await rejectsCode(api.savePlayPersona(actor, persona), "FORBIDDEN");
+  await rejectsCode(api.createPlayRoom(actor), "FORBIDDEN");
+  assert.equal(await db.playPersona.count({ where: { ownerId: actor.id } }), 0);
+  assert.equal(await db.playRoom.count({ where: { ownerId: actor.id } }), 0);
+  assert.equal(
+    await db.consent.count({ where: { participantId: actor.id } }),
+    1,
+  );
+  assert.ok(
+    await db.account.findUnique({ where: { participantId: actor.id } }),
+  );
+});
+
+test("end-of-analysis purge previews by default and erases only game-prefix accounts when explicitly confirmed", async () => {
+  const researcher: Actor = {
+    id: "enrolled-target-" + randomUUID(),
+    role: "TARGET",
+    pseudonym: "独立研究参与者",
+  };
+  await db.participant.create({
+    data: {
+      ...researcher,
+      account: {
+        create: {
+          username: "research_" + randomUUID().slice(0, 12),
+          passwordHash: "synthetic-test",
+        },
+      },
+    },
+  });
+  // An old, unrelated fixture proves purge selection is based on ownership,
+  // even though current game gateways now reject research participant accounts.
+  await db.playPersona.create({
+    data: { ownerId: researcher.id, ...persona, savedAt: new Date() },
+  });
+  const legacy = await db.playRoom.create({
+    data: {
+      ownerId: researcher.id,
+      mode: "HUMAN",
+      status: "CANCELLED",
+      personaSnapshot: { ...persona },
+      expiresAt: new Date(Date.now() + 60_000),
+      messages: {
+        create: {
+          speaker: "FRIEND",
+          sequence: 1,
+          idempotencyKey: randomUUID(),
+          text: "不属于游戏前缀的记录",
+        },
+      },
+    },
+  });
+  const retained = { guest: { roomId: legacy.id } };
+  const before = await db.playRoom.findUniqueOrThrow({
+    where: { id: retained.guest.roomId },
+    include: { messages: true },
+  });
+  await rejectsCode(api.deletePlayAccount(researcher), "FORBIDDEN");
+  const preview = await api.purgePlayData();
+  assert.equal(preview.dryRun, true);
+  assert.ok(
+    preview.participants > 0 &&
+      preview.personas > 0 &&
+      preview.rooms > 0 &&
+      preview.messages > 0,
+  );
+  const gameCount = await db.participant.count({
+    where: { id: { startsWith: "play-target-" }, role: "TARGET" },
+  });
+  assert.equal(gameCount, preview.participants);
+  const cli = (args: string[]) =>
+    execFileSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/purge-play-data.ts", ...args],
+      { env: process.env, encoding: "utf8", stdio: "pipe" },
+    );
+  const dryRun = cli([]);
+  assert.match(dryRun, /Dry run/);
+  assert.match(dryRun, /"dryRun": true/);
+  assert(!dryRun.includes(researcher.id) && !dryRun.includes(persona.bio));
+  assert.throws(() => cli(["--confirm-purg"]));
+  assert.equal(
+    await db.participant.count({
+      where: { id: { startsWith: "play-target-" }, role: "TARGET" },
+    }),
+    gameCount,
+  );
+  const erased = cli(["--confirm-purge"]);
+  assert.match(erased, /"dryRun": false/);
+  assert.equal(
+    await db.participant.count({
+      where: { id: { startsWith: "play-target-" }, role: "TARGET" },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.playPersona.count({
+      where: { ownerId: { startsWith: "play-target-" } },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.playRoom.count({
+      where: { ownerId: { startsWith: "play-target-" } },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.account.count({
+      where: { participantId: { startsWith: "play-target-" } },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.authSession.count({
+      where: { participantId: { startsWith: "play-target-" } },
+    }),
+    0,
+  );
+  assert.equal(
+    await db.auditEvent.count({
+      where: {
+        OR: [
+          { actorId: { startsWith: "play-target-" } },
+          {
+            entityType: "Participant",
+            entityId: { startsWith: "play-target-" },
+          },
+        ],
+      },
+    }),
+    0,
+  );
+  assert.deepEqual(
+    await db.playRoom.findUniqueOrThrow({
+      where: { id: retained.guest.roomId },
+      include: { messages: true },
+    }),
+    before,
+  );
+  assert.deepEqual(await api.purgePlayData(true), {
+    dryRun: false,
+    participants: 0,
+    personas: 0,
+    rooms: 0,
+    messages: 0,
+    accounts: 0,
+    sessions: 0,
+    auditEvents: 0,
   });
 });

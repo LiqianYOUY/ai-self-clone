@@ -26,10 +26,15 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts",
-    ".next-build/types/**/*.ts",
-    ".next-build/dev/types/**/*.ts"
+    ".cache/next/types/**/*.ts",
+    ".cache/next/dev/types/**/*.ts",
+    ".cache/production/types/**/*.ts",
+    ".cache/production/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules", ".next-portals-test", ".next-portals-preview"]
+  "exclude": [
+    "node_modules",
+    ".cache/portals-test",
+    ".cache/portals-preview",
+    ".local"
+  ]
 }
