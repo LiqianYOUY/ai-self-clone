@@ -1,0 +1,89 @@
+name: clone-study-synthetic
+services:
+  research-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: clone_study
+      POSTGRES_USER: study_app
+      POSTGRES_PASSWORD: ${RESEARCH_DB_PASSWORD:?Set a local research DB password}
+    command:
+      [
+        "postgres",
+        "-c",
+        "log_statement=none",
+        "-c",
+        "log_min_error_statement=panic",
+      ]
+    volumes:
+      - research-data:/var/lib/postgresql/data
+    networks: [research-private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U study_app -d clone_study"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  migrate:
+    build: .
+    environment:
+      STUDY_MODE: synthetic
+      DATABASE_URL: postgresql://study_app:${RESEARCH_DB_PASSWORD:?Set a local research DB password}@research-db:5432/clone_study?schema=public
+    command: ["sh", "-c", "npm run db:migrate && npm run db:seed"]
+    networks: [research-private]
+    depends_on:
+      research-db:
+        condition: service_healthy
+  app:
+    build: .
+    environment:
+      STUDY_MODE: synthetic
+      APP_HOST: 0.0.0.0
+      APP_ORIGIN: http://127.0.0.1:3000
+      PORT: 3000
+      DATABASE_URL: postgresql://study_app:${RESEARCH_DB_PASSWORD:?Set a local research DB password}@research-db:5432/clone_study?schema=public
+      DEMO_ACCESS_TOKEN: ${DEMO_ACCESS_TOKEN:?Set a synthetic demo token of at least 24 characters}
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [research-private]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+  # Reserved identity boundary only; research app cannot join this network,
+  # receives no credentials, and no identity API is implemented in this demo.
+  identity-db:
+    image: postgres:17-bookworm
+    profiles: [identity-scaffold]
+    environment:
+      POSTGRES_DB: clone_identity
+      POSTGRES_USER: identity_service
+      POSTGRES_PASSWORD: ${IDENTITY_DB_PASSWORD:-unused-identity-scaffold}
+    command:
+      [
+        "postgres",
+        "-c",
+        "log_statement=none",
+        "-c",
+        "log_min_error_statement=panic",
+      ]
+    volumes: ["identity-data:/var/lib/postgresql/data"]
+    networks: [identity-private]
+    restart: unless-stopped
+networks:
+  research-private:
+  identity-private:
+    internal: true
+volumes:
+  research-data:
+  identity-data:

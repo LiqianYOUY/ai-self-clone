@@ -1,0 +1,16 @@
+node_modules
+.next
+.next-build
+.next-*
+.local
+.git
+.env
+.env.*
+*.docx
+*.log
+test-results
+playwright-report
+docs
+tests
+*.tsbuildinfo
+.DS_Store

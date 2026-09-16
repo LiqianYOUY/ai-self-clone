@@ -1,0 +1,24 @@
+node_modules/
+.next/
+.next-build/
+.next-portals-test/
+.next-portals-preview/
+.local/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage/
+test-results/
+playwright-report/
+.DS_Store
+*.log
+*.pem
+*.key
+*.p12
+*.dump
+*.sql.gz
+# Original research inputs are kept locally; publish implementation docs only.
+*.docx
+docs/AI_Self_Clone_Proposal.txt
+docs/AI_Clone_Platform_Prompt.txt

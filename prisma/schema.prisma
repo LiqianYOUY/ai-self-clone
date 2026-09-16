@@ -1,0 +1,601 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Study {
+  id               String    @id
+  name             String
+  mode             String    @default("SYNTHETIC")
+  status           String    @default("DRAFT")
+  seed             String
+  algorithmVersion String
+  assignmentHash   String
+  balance          Json
+  config           Json
+  frozenAt         DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  dyads            Dyad[]
+}
+
+model Participant {
+  id                     String                 @id
+  role                   String
+  pseudonym              String
+  timezone               String                 @default("Australia/Sydney")
+  active                 Boolean                @default(true)
+  createdAt              DateTime               @default(now()) @db.Timestamptz(3)
+  authSessions           AuthSession[]
+  consents               Consent[]
+  targetDyads            Dyad[]                 @relation("TargetDyads")
+  friendDyads            Dyad[]                 @relation("FriendDyads")
+  corpus                 CorpusItem[]
+  personas               PersonaVersion[]
+  knowledge              KnowledgeItem[]
+  withdrawals            WithdrawalRequest[]
+  account                Account?
+  invitationsCreated     EnrollmentInvitation[] @relation("InvitationCreator")
+  invitationsForTarget   EnrollmentInvitation[] @relation("InvitationTarget")
+  invitationAccepted     EnrollmentInvitation?  @relation("InvitationAcceptor")
+  preparationTargetRooms PreparationRoom[]      @relation("PreparationTarget")
+  preparationFriendRooms PreparationRoom[]      @relation("PreparationFriend")
+  preparationMessages    PreparationMessage[]
+  playPersona            PlayPersona?
+  playRooms              PlayRoom[]
+}
+
+// Casual five-round game; no dependency on preparation conversations or studies.
+model PlayPersona {
+  id           String      @id @default(cuid())
+  ownerId      String      @unique
+  owner        Participant @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  displayName  String      @default("")
+  bio          String      @default("")
+  style        String      @default("")
+  memories     String      @default("")
+  examplesText String      @default("")
+  savedAt      DateTime?    @db.Timestamptz(3)
+  heartbeatAt  DateTime?    @db.Timestamptz(3)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime     @default(now()) @updatedAt @db.Timestamptz(3)
+}
+
+model PlayRoom {
+  id              String        @id @default(cuid())
+  ownerId         String
+  owner           Participant   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mode            String
+  status          String        @default("WAITING")
+  inviteHash      String?       @unique
+  guestHash       String?       @unique
+  guestName       String?
+  personaSnapshot Json
+  expiresAt       DateTime      @db.Timestamptz(3)
+  consentVersion  String?
+  consentedAt     DateTime?     @db.Timestamptz(3)
+  turnsCompleted  Int           @default(0)
+  nextSequence    Int           @default(1)
+  pendingTurn     Int?
+  pendingSince    DateTime?     @db.Timestamptz(3)
+  generationClaimedAt DateTime? @db.Timestamptz(3)
+  guess           String?
+  reason          String?
+  revealedAt      DateTime?     @db.Timestamptz(3)
+  cancelledAt     DateTime?     @db.Timestamptz(3)
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime      @default(now()) @updatedAt @db.Timestamptz(3)
+  messages        PlayMessage[]
+
+  @@index([ownerId, createdAt])
+  @@index([status, pendingSince])
+}
+
+model PlayMessage {
+  id             String   @id @default(cuid())
+  roomId         String
+  room           PlayRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  speaker        String
+  sequence       Int
+  idempotencyKey String
+  text           String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([roomId, sequence])
+  @@unique([roomId, speaker, idempotencyKey])
+}
+
+// Real account enrollment is deliberately separate from the frozen synthetic study.
+model Account {
+  id            String      @id @default(cuid())
+  username      String      @unique
+  passwordHash  String
+  participantId String      @unique
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+}
+
+model EnrollmentInvitation {
+  id           String       @id @default(cuid())
+  tokenHash    String       @unique
+  kind         String
+  createdById  String
+  createdBy    Participant  @relation("InvitationCreator", fields: [createdById], references: [id])
+  targetId     String?
+  target       Participant? @relation("InvitationTarget", fields: [targetId], references: [id])
+  acceptedById String?      @unique
+  acceptedBy   Participant? @relation("InvitationAcceptor", fields: [acceptedById], references: [id])
+  expiresAt    DateTime     @db.Timestamptz(3)
+  acceptedAt   DateTime?    @db.Timestamptz(3)
+  revokedAt    DateTime?    @db.Timestamptz(3)
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([targetId, expiresAt])
+  @@index([createdById, createdAt])
+}
+
+// Human-to-human preparation only. These rooms have no experimental condition,
+// allocation, AI provider, transcript export, or linkage to formal Session.
+model PreparationRoom {
+  id           String               @id @default(cuid())
+  targetId     String
+  target       Participant          @relation("PreparationTarget", fields: [targetId], references: [id])
+  friendId     String
+  friend       Participant          @relation("PreparationFriend", fields: [friendId], references: [id])
+  status       String               @default("ACTIVE")
+  nextSequence Int                  @default(1)
+  stoppedById  String?
+  stoppedAt    DateTime?            @db.Timestamptz(3)
+  updatedAt    DateTime             @default(now()) @updatedAt @db.Timestamptz(3)
+  createdAt    DateTime             @default(now()) @db.Timestamptz(3)
+  messages     PreparationMessage[]
+
+  @@unique([targetId, friendId])
+}
+
+model PreparationMessage {
+  id             String          @id @default(cuid())
+  roomId         String
+  room           PreparationRoom @relation(fields: [roomId], references: [id])
+  authorId       String
+  author         Participant     @relation(fields: [authorId], references: [id])
+  sequence       Int
+  idempotencyKey String
+  text           String?
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
+  destroyedAt    DateTime?       @db.Timestamptz(3)
+
+  @@unique([roomId, sequence])
+  @@unique([roomId, authorId, idempotencyKey])
+}
+
+model AuthSession {
+  id            String      @id @default(cuid())
+  tokenHash     String      @unique
+  portal        String?
+  participantId String
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  expiresAt     DateTime    @db.Timestamptz(3)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([expiresAt])
+}
+
+model Consent {
+  id                String      @id @default(cuid())
+  participantId     String
+  participant       Participant @relation(fields: [participantId], references: [id])
+  participation     Boolean     @default(false)
+  aiProcessing      Boolean     @default(false)
+  corpusUse         Boolean     @default(false)
+  familiarSharing   Boolean     @default(false)
+  unfamiliarSharing Boolean     @default(false)
+  targetReview      Boolean     @default(false)
+  secondarySharing  Boolean     @default(false)
+  quotation         Boolean     @default(false)
+  version           String      @default("synthetic-v1")
+  recordedAt        DateTime    @default(now()) @db.Timestamptz(3)
+  revokedAt         DateTime?   @db.Timestamptz(3)
+
+  @@index([participantId, recordedAt])
+}
+
+model Dyad {
+  id         String      @id
+  studyId    String
+  study      Study       @relation(fields: [studyId], references: [id])
+  targetId   String
+  target     Participant @relation("TargetDyads", fields: [targetId], references: [id])
+  friendId   String
+  friend     Participant @relation("FriendDyads", fields: [friendId], references: [id])
+  blockIndex Int
+  sessions   Session[]
+
+  @@unique([studyId, targetId, friendId])
+}
+
+model Session {
+  id               String            @id
+  dyadId           String
+  dyad             Dyad              @relation(fields: [dyadId], references: [id])
+  index            Int
+  privateCondition String
+  assignedTopic    String
+  actualTopic      String
+  switchReason     String?
+  status           String            @default("SCHEDULED")
+  epoch            Int               @default(0)
+  nextSequence     Int               @default(1)
+  currentTurnId    String?
+  personaVersionId String?
+  scheduledAt      DateTime          @db.Timestamptz(3)
+  startedAt        DateTime?         @db.Timestamptz(3)
+  endedAt          DateTime?         @db.Timestamptz(3)
+  excluded         Boolean           @default(false)
+  destroyedAt      DateTime?         @db.Timestamptz(3)
+  messages         Message[]
+  outbox           Outbox[]
+  generations      Generation[]
+  events           SessionEvent[]
+  surveys          LiveSurvey[]
+  stimuli          StimulusExcerpt[]
+  safety           SafetyEvent[]
+
+  @@unique([dyadId, index])
+}
+
+model Message {
+  id                   String    @id @default(cuid())
+  sessionId            String
+  session              Session   @relation(fields: [sessionId], references: [id])
+  sequence             Int
+  clientIdempotencyKey String?
+  authorId             String?
+  publicRole           String
+  text                 String?
+  epoch                Int
+  status               String    @default("DELIVERED")
+  generatedAt          DateTime? @db.Timestamptz(3)
+  deliveredAt          DateTime? @db.Timestamptz(3)
+  acknowledgedAt       DateTime? @db.Timestamptz(3)
+  destroyedAt          DateTime? @db.Timestamptz(3)
+
+  @@unique([sessionId, sequence])
+  @@unique([sessionId, clientIdempotencyKey])
+}
+
+model Generation {
+  id            String    @id @default(cuid())
+  sessionId     String
+  session       Session   @relation(fields: [sessionId], references: [id])
+  epoch         Int
+  turnId        String
+  sourceVersion String
+  status        String    @default("PENDING")
+  triggeredAt   DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt    DateTime? @db.Timestamptz(3)
+  cancelledAt   DateTime? @db.Timestamptz(3)
+
+  @@index([status, triggeredAt])
+}
+
+model Outbox {
+  id            String    @id @default(cuid())
+  sessionId     String
+  session       Session   @relation(fields: [sessionId], references: [id])
+  generationId  String?
+  epoch         Int
+  turnId        String?
+  sourceVersion String?
+  publicRole    String
+  text          String?
+  status        String    @default("QUEUED")
+  eligibleAt    DateTime  @db.Timestamptz(3)
+  generatedAt   DateTime? @db.Timestamptz(3)
+  deliveredAt   DateTime? @db.Timestamptz(3)
+  messageId     String?
+
+  @@index([status, eligibleAt])
+}
+
+model SessionEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   Session  @relation(fields: [sessionId], references: [id])
+  kind      String
+  actorId   String?
+  epoch     Int
+  metadata  Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model CorpusItem {
+  id           String      @id @default(cuid())
+  targetId     String
+  target       Participant @relation(fields: [targetId], references: [id])
+  partition    String
+  text         String?
+  contentHash  String
+  source       String      @default("TARGET_PASTE")
+  reviewStatus String      @default("PENDING")
+  riskCodes    Json
+  duplicateOf  String?
+  approvedAt   DateTime?   @db.Timestamptz(3)
+  destroyedAt  DateTime?   @db.Timestamptz(3)
+  createdAt    DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@index([targetId, partition, reviewStatus])
+}
+
+model PersonaVersion {
+  id             String      @id @default(cuid())
+  targetId       String
+  target         Participant @relation(fields: [targetId], references: [id])
+  version        Int
+  status         String      @default("DRAFT")
+  style          Json
+  interaction    Json
+  boundaries     Json
+  buildCorpusIds Json
+  contentHash    String
+  previewCount   Int         @default(0)
+  frozenAt       DateTime?   @db.Timestamptz(3)
+  destroyedAt    DateTime?   @db.Timestamptz(3)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@unique([targetId, version])
+}
+
+model KnowledgeItem {
+  id               String      @id @default(cuid())
+  targetId         String
+  target           Participant @relation(fields: [targetId], references: [id])
+  personaVersionId String
+  corpusItemId     String
+  permissionScope  String      @default("CURRENT_TARGET_SESSION")
+  text             String?
+  approved         Boolean     @default(true)
+  destroyedAt      DateTime?   @db.Timestamptz(3)
+
+  @@index([targetId, personaVersionId, permissionScope])
+}
+
+model CalibrationAnswer {
+  id         String   @id @default(cuid())
+  targetId   String
+  questionId String
+  answer     String?
+  partition  String   @default("BUILD")
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([targetId, questionId])
+}
+
+model BaselineSample {
+  id                 String   @id @default(cuid())
+  targetId           String
+  firstInputToSendMs Int
+  responseMs         Int
+  burstCount         Int
+  intervalMs         Int?
+  device             String
+  inputTool          String
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model LiveSurvey {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       Session  @relation(fields: [sessionId], references: [id])
+  participantId String
+  guess         String?
+  confidence    Int?
+  pAI           Float?
+  likeness      Int?
+  relationalFit Int?
+  naturalness   Int?
+  trust         Int?
+  comfort       Int?
+  reason        String?
+  answers       Json
+  submittedAt   DateTime @default(now()) @db.Timestamptz(3)
+  excluded      Boolean  @default(false)
+
+  @@unique([sessionId, participantId])
+}
+
+model StimulusExcerpt {
+  id                     String                   @id @default(cuid())
+  sessionId              String
+  session                Session                  @relation(fields: [sessionId], references: [id])
+  text                   String?
+  context                String?
+  sourceMessageIds       Json
+  privateCondition       String
+  status                 String                   @default("APPROVED")
+  contextVersion         String
+  eligibilityRuleVersion String
+  destroyedAt            DateTime?                @db.Timestamptz(3)
+  assignments            OfflineAssignment[]
+  ratings                MatchedRating[]
+  sharingApprovals       ExcerptSharingApproval[]
+}
+
+model FamiliarityScreen {
+  id            String   @id @default(cuid())
+  participantId String
+  targetId      String
+  knowsTarget   Boolean
+  recordedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([participantId, targetId])
+}
+
+model OfflineAssignment {
+  id               String          @id @default(cuid())
+  stimulusId       String
+  stimulus         StimulusExcerpt @relation(fields: [stimulusId], references: [id])
+  participantId    String
+  familiarityRole  String
+  displayPseudonym String
+  status           String          @default("PENDING")
+  expiresAt        DateTime        @db.Timestamptz(3)
+  rating           OfflineRating?
+
+  @@unique([stimulusId, participantId])
+}
+
+model OfflineRating {
+  id             String            @id @default(cuid())
+  assignmentId   String            @unique
+  assignment     OfflineAssignment @relation(fields: [assignmentId], references: [id])
+  guess          String?
+  confidence     Int?
+  pAI            Float?
+  naturalness    Int?
+  personLikeness Int?
+  contamination  Boolean           @default(false)
+  submittedAt    DateTime          @default(now()) @db.Timestamptz(3)
+  excluded       Boolean           @default(false)
+}
+
+model MatchedRating {
+  id                    String          @id @default(cuid())
+  stimulusId            String
+  stimulus              StimulusExcerpt @relation(fields: [stimulusId], references: [id])
+  participantId         String
+  role                  String
+  sourceDisclosed       Boolean
+  contextVersion        String
+  likeness              Int?
+  predictedFriendRating Int?
+  endorsement           String?
+  sharedContextApproved Boolean         @default(false)
+  submittedAt           DateTime        @default(now()) @db.Timestamptz(3)
+  excluded              Boolean         @default(false)
+
+  track       String  @default("MATCHED")
+  contextHash String?
+
+  @@unique([stimulusId, participantId, track])
+}
+
+model RelationshipTimepoint {
+  id            String   @id @default(cuid())
+  dyadId        String
+  participantId String
+  timepoint     String
+  ios           Int?
+  submittedAt   DateTime @default(now()) @db.Timestamptz(3)
+  excluded      Boolean  @default(false)
+
+  @@unique([dyadId, participantId, timepoint])
+}
+
+model SafetyEvent {
+  id             String    @id @default(cuid())
+  sessionId      String
+  session        Session   @relation(fields: [sessionId], references: [id])
+  reasonCode     String
+  status         String    @default("OPEN")
+  actorId        String?
+  acknowledgedBy String?
+  outcome        String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  acknowledgedAt DateTime? @db.Timestamptz(3)
+  resolvedAt     DateTime? @db.Timestamptz(3)
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model DataLineage {
+  id         String   @id @default(cuid())
+  ownerId    String
+  parentType String
+  parentId   String
+  childType  String
+  childId    String
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([ownerId])
+}
+
+model WithdrawalRequest {
+  id             String      @id @default(cuid())
+  participantId  String
+  participant    Participant @relation(fields: [participantId], references: [id])
+  mode           String
+  scope          String
+  sessionId      String?
+  status         String      @default("REQUESTED")
+  affectedCounts Json
+  requestedAt    DateTime    @default(now()) @db.Timestamptz(3)
+  completedAt    DateTime?   @db.Timestamptz(3)
+  backupPurgeDue DateTime?   @db.Timestamptz(3)
+}
+
+model DeletionTombstone {
+  id          String   @id @default(cuid())
+  requestId   String
+  entityType  String
+  entityId    String
+  contentHash String?
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([entityType, entityId])
+}
+
+model ExportManifest {
+  id                 String    @id @default(cuid())
+  actorId            String
+  status             String    @default("VALID")
+  datasetNames       Json
+  participantIds     Json
+  checksums          Json
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  invalidatedAt      DateTime? @db.Timestamptz(3)
+  invalidationReason String?
+}
+
+model ExcerptSharingApproval {
+  id             String          @id @default(cuid())
+  stimulusId     String
+  stimulus       StimulusExcerpt @relation(fields: [stimulusId], references: [id])
+  participantId  String
+  scope          String
+  contextVersion String
+  contextHash    String
+  approved       Boolean         @default(false)
+  recordedAt     DateTime        @default(now()) @db.Timestamptz(3)
+
+  @@unique([stimulusId, participantId, scope])
+}
+
+model DebriefRecord {
+  id               String   @id @default(cuid())
+  participantId    String
+  revealRequested  Boolean  @default(false)
+  countingStrategy Boolean  @default(false)
+  inferredRatio    Boolean  @default(false)
+  requestedAt      DateTime @default(now()) @db.Timestamptz(3)
+}
+
+model SourceRevealGrant {
+  id            String   @id @default(cuid())
+  participantId String
+  sessionId     String
+  revealedAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([participantId, sessionId])
+}

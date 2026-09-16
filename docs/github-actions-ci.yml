@@ -1,0 +1,45 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_USER: study_test
+          POSTGRES_PASSWORD: ci-disposable-password
+          POSTGRES_DB: clone_study_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U study_test -d clone_study_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql://study_test:ci-disposable-password@127.0.0.1:5432/clone_study_test
+      STUDY_MODE: synthetic
+      NEXT_DIST_DIR: .next-build
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm run test:all
+      - run: npm run build
+      - run: npm prune --omit=dev
+      - run: npm run verify:production

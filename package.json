@@ -1,0 +1,53 @@
+{
+  "name": "ai-self-clone-study",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consent-aware AI self-clone research platform",
+  "scripts": {
+    "dev": "node --import tsx scripts/start-local.ts",
+    "dev:app": "node --import tsx server.ts",
+    "model:setup": "node --import tsx scripts/setup-local-model.ts",
+    "model:start": "node --import tsx scripts/start-local-model.ts",
+    "build": "prisma generate && next build --webpack",
+    "start": "NODE_ENV=production node --import tsx server.ts",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "node --import tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/domain.test.ts tests/runtime-gateway.test.ts tests/portal-auth.test.ts tests/portal-gateway.test.ts",
+    "test:kernel": "node --import tsx --test tests/kernel.test.ts",
+    "test:evaluation": "node --import tsx --test tests/evaluation.test.ts",
+    "test:runtime": "node --import tsx scripts/smoke-runtime.ts",
+    "test:portals": "node --import tsx --test tests/portals.test.ts",
+    "test:play": "node --import tsx --test tests/play.test.ts tests/play-provider.test.ts tests/play-gateway.test.ts",
+    "test:portals:http": "node --import tsx scripts/smoke-portals.ts",
+    "test:all": "node --import tsx --test tests/*.test.ts",
+    "verify:production": "node --import tsx scripts/verify-production.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "dotenv": "17.4.2",
+    "lucide-react": "1.41.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "socket.io": "4.8.3",
+    "socket.io-client": "4.8.3",
+    "zod": "4.5.4",
+    "tsx": "4.23.13",
+    "prisma": "6.19.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.4.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "embedded-postgres": "18.4.0-beta.17",
+    "prettier": "3.9.6",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.0"
+  }
+}
