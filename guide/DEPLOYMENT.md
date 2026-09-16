@@ -8,7 +8,7 @@
 
 部署设备为 Raspberry Pi 5 / 8GB。`ai-self-clone.service` 管理应用、项目 PostgreSQL 和 Ollama，网页监听 `127.0.0.1:3100`。服务使用两个 CPU 核等效配额和较低调度优先级，内存不足时优先终止该服务。配置中的 4GB 内存上限需要系统启用 memory cgroup；当前设备未启用，不能视为已生效的硬上限。
 
-`ai-self-tunnel.service` 单独运行用户态 `tailscaled`，身份为 `ai-self-clone`，state 与 socket 均位于项目 `.local/tailscale/`。它使用独立节点的 HTTPS 443，不修改系统原有的 wheelchair Serve 或 smartbox 443。当前节点在线、Funnel 443 已配置、证书已取得，并已收到 23 个入口中继节点；但权威 DNS 仍返回无记录（NODATA）。同步关闭再开启 Funnel、重启独立隧道服务后问题仍存在，`https://ai-self-clone.tail3d8705.ts.net` 尚未通过公网访问验证。
+`ai-self-tunnel.service` 单独运行用户态 `tailscaled`，身份为 `ai-self-clone`，state 与 socket 均位于项目 `.local/tailscale/`。它使用独立节点的 HTTPS 443，不修改系统原有的 wheelchair Serve 或 smartbox 443。当前节点在线、证书有效，`https://ai-self-clone.tail3d8705.ts.net` 已通过公网 HTTPS 及浏览器页面检查。首次发布曾出现 DNS NODATA，后续已存在有效的 A/AAAA 记录；部分公共解析结果仍有差异，记录见验证文档。设备需保持开机和联网。
 
 环境文件 `.env` 不提交版本控制，权限设为 `0600`。主要配置：
 

@@ -1,5 +1,5 @@
 // Set this only after the public game endpoint has passed deployment checks.
-const ONLINE_GAME_URL = "";
+const ONLINE_GAME_URL = "https://ai-self-clone.tail3d8705.ts.net/play";
 const LANGUAGE_KEY = "self-language";
 
 const translations = {

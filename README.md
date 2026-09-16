@@ -4,7 +4,9 @@
 
 **[打开网页](https://liqianyouy.github.io/ai-self-clone/)**
 
-网页入口由 GitHub Pages 展示，完整实验部署在独立树莓派服务。Mac 与树莓派均通过 124 项回归和生产构建，设备上的本人与真实 AI 五轮对局通过验收。Tailscale 节点在线且已取得 HTTPS 证书，但权威 DNS 尚无公网记录，外网入口仍未验证；Cloudflare 临时备用尚未启用。完成后参与者可直接用浏览器打开，无需下载项目或运行终端；详见 [验证记录](guide/VERIFICATION.md)。
+**[直接进入在线实验](https://ai-self-clone.tail3d8705.ts.net/play)**
+
+网页入口由 GitHub Pages 展示，完整实验部署在独立树莓派服务，参与者直接用浏览器打开，无需下载项目或运行终端。Mac 与树莓派均通过 124 项回归和生产构建，设备上的本人与真实 AI 五轮对局通过验收。Tailscale 公网 HTTPS、游戏页面和隐私页已验证可访问；部分公共 DNS 查询结果仍有差异，可能影响个别网络。Cloudflare 备用未启用。树莓派需要保持开机联网，详见 [验证记录](guide/VERIFICATION.md)。
 
 ## 使用
 
