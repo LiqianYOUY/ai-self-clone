@@ -39,7 +39,7 @@
 
 ### 模型配置
 
-本机模型模式无需 API 密钥：运行 `npm run model:setup` 一次，默认下载项目内 Ollama 和 Qwen3.5 4B；树莓派通过 `PLAY_MODEL_NAME` 改用 0.8B，见 [部署说明](DEPLOYMENT.md)。以后 `npm run dev` 自动启动已安装的本地运行时，退出时只关闭由本项目启动的进程。也可用 `npm run model:start` 单独启动。模型准备后，主持人页面会自动检测模型是否就绪。
+本机模型模式无需 API 密钥：运行 `npm run model:setup` 一次，默认下载项目内 Ollama 和 Qwen3.5 4B；树莓派当前也使用 4B，并启用启动预热和模型驻留，见 [部署说明](DEPLOYMENT.md)。以后 `npm run dev` 自动启动已安装的本地运行时，退出时只关闭由本项目启动的进程。也可用 `npm run model:start` 单独启动。模型准备后，主持人页面会自动检测模型是否就绪。
 
 macOS 便携运行时固定为 Ollama v0.33.3，下载后核验 SHA-256；优先复用已安装的 Ollama。项目自行启动服务时禁用云端功能，只绑定本机地址。参考 [Ollama 原生聊天接口](https://docs.ollama.com/api/chat) 和 [Qwen3.5 4B](https://ollama.com/library/qwen3.5:4b)。模型约 3.4GB；首次安装需联网，后续聊天在本机处理。小模型是否像本人需要真实样本与试玩验证。
 
