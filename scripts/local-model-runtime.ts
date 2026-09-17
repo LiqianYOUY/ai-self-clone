@@ -276,6 +276,86 @@ export async function ensureLocalModelService(
   );
 }
 
+/** Load only the configured local model, without any participant or example text. */
+export async function preloadLocalModel(
+  config: LocalModelConfiguration,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const deadline = AbortSignal.timeout(180_000);
+  const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  try {
+    const origin = new URL(config.origin);
+    if (
+      origin.protocol !== "http:" ||
+      !["127.0.0.1", "localhost", "[::1]"].includes(origin.hostname) ||
+      origin.username ||
+      origin.password ||
+      origin.search ||
+      origin.hash ||
+      !["", "/"].includes(origin.pathname) ||
+      typeof config.model !== "string" ||
+      config.model.length > 200 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9._-]+)?$/.test(
+        config.model,
+      ) ||
+      /(?:^|[:/-])cloud(?:$|[:/-])/i.test(config.model)
+    )
+      throw new Error("INVALID_LOCAL_CONFIGURATION");
+    combined.throwIfAborted();
+    const response = await fetch(`${origin.origin}/api/chat`, {
+      method: "POST",
+      redirect: "error",
+      signal: combined,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [],
+        stream: false,
+        think: false,
+        options: { num_ctx: 4096 },
+        keep_alive: -1,
+      }),
+    });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new Error("PRELOAD_UNAVAILABLE");
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        size += chunk.value.byteLength;
+        if (size > 16_384) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("PRELOAD_RESPONSE_TOO_LARGE");
+        }
+        chunks.push(chunk.value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    combined.throwIfAborted();
+    const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      payload.done !== true ||
+      "error" in payload
+    ) {
+      throw new Error("PRELOAD_NOT_COMPLETE");
+    }
+  } catch {
+    combined.throwIfAborted();
+    // Never expose local provider response bodies or transport errors.
+    throw new Error("Local model preloading failed.");
+  }
+}
+
 export async function pullLocalModel(
   config: LocalModelConfiguration,
   signal?: AbortSignal,

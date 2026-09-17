@@ -15,6 +15,7 @@ const oldEnv = {
   key: process.env.PLAY_MODEL_API_KEY,
   model: process.env.PLAY_MODEL_NAME,
   provider: process.env.PLAY_MODEL_PROVIDER,
+  resident: process.env.PLAY_MODEL_RESIDENT,
 };
 const context = {
   persona: {
@@ -38,6 +39,7 @@ const completion = (message: Record<string, unknown>, finish_reason = "stop") =>
     choices: [{ message, finish_reason }],
   });
 beforeEach(() => {
+  delete process.env.PLAY_MODEL_RESIDENT;
   process.env.PLAY_MODEL_PROVIDER = "compatible";
   process.env.PLAY_MODEL_BASE_URL = "https://provider.example/v1/";
   process.env.PLAY_MODEL_API_KEY = "private-provider-key";
@@ -50,6 +52,7 @@ afterEach(() => {
     PLAY_MODEL_API_KEY: oldEnv.key,
     PLAY_MODEL_NAME: oldEnv.model,
     PLAY_MODEL_PROVIDER: oldEnv.provider,
+    PLAY_MODEL_RESIDENT: oldEnv.resident,
   }))
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -98,6 +101,7 @@ test("provider sends ordered role messages and returns only trimmed reply text",
     assert.equal(body.stream, false);
     assert.equal(body.model, "private-model");
     assert.equal(body.max_tokens, 512);
+    assert.equal(body.temperature, 0);
     assert(body.messages[0].content.includes("本轮最多 24 个字符"));
     assert.deepEqual(body.messages.slice(1), [
       { role: "user", content: "去吃饭吗" },
@@ -215,8 +219,10 @@ test("without environment settings the provider defaults to native local Ollama 
     assert.equal(body.model, "qwen3.5:4b");
     assert.equal(body.think, false);
     assert.equal(body.stream, false);
+    assert.equal(body.keep_alive, "10m");
     assert.equal(body.options.num_ctx, 4096);
     assert.equal(body.options.num_predict, 512);
+    assert.equal(body.options.temperature, 0);
     return Response.json({
       model: "qwen3.5:4b",
       message: {
@@ -227,6 +233,43 @@ test("without environment settings the provider defaults to native local Ollama 
       done: true,
       done_reason: "stop",
     });
+  };
+  assert.equal(await generatePlayReply(context), "好，就老地方");
+});
+
+test("resident mode is explicit and only changes the native local keep-alive", async () => {
+  process.env.PLAY_MODEL_PROVIDER = "ollama";
+  process.env.PLAY_MODEL_BASE_URL = "http://127.0.0.1:11434";
+  for (const [setting, expected] of [
+    ["0", "10m"],
+    ["true", "10m"],
+    ["1", -1],
+  ] as const) {
+    process.env.PLAY_MODEL_RESIDENT = setting;
+    globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.keep_alive, expected);
+      assert.equal(body.think, false);
+      assert.deepEqual(body.messages.slice(1), [
+        { role: "user", content: "去吃饭吗" },
+        { role: "assistant", content: "去哪" },
+        { role: "user", content: "老地方" },
+      ]);
+      return Response.json({
+        message: { content: "好，就老地方" },
+        done: true,
+        done_reason: "stop",
+      });
+    };
+    assert.equal(await generatePlayReply(context), "好，就老地方");
+  }
+  process.env.PLAY_MODEL_PROVIDER = "compatible";
+  process.env.PLAY_MODEL_BASE_URL = "https://provider.example/v1";
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.equal("keep_alive" in body, false);
+    assert.equal("options" in body, false);
+    return completion({ content: "好，就老地方" });
   };
   assert.equal(await generatePlayReply(context), "好，就老地方");
 });
@@ -471,6 +514,62 @@ test("speaker ownership and a later correction survive retries without becoming 
   }
 });
 
+test("confirmation purpose preserves context and retrieval while allowing agreement, correction and uncertainty", async () => {
+  const persona = {
+    ...context.persona,
+    examplesText:
+      "朋友：改到周日对吗\n我：是，周日见\n朋友：什么意思\n我：我刚才没表达清楚，是说昨晚没睡好",
+  };
+  for (const [latest, reply] of [
+    ["所以你是说周日，不是周六，对吧", "对，周日"],
+    ["所以你是说周六，对吗？", "不是，是周日"],
+    ["你说周六也有空，是这个意思吗", "周六还没说定"],
+  ]) {
+    const messages = [
+      { speaker: "FRIEND" as const, text: "周六下午见面行吗" },
+      { speaker: "SOURCE" as const, text: "周日下午我有空" },
+      { speaker: "FRIEND" as const, text: latest },
+    ];
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(body.messages.slice(1), [
+        { role: "user", content: "周六下午见面行吗" },
+        { role: "assistant", content: "周日下午我有空" },
+        { role: "user", content: latest },
+      ]);
+      const system = body.messages[0].content;
+      assert.match(system, /核对本局.*不符.*纠正/u);
+      assert.match(system, /没说明.*未知/u);
+      assert(!system.includes("我刚才没表达清楚"));
+      assert(!system.includes("昨晚没睡好"));
+      if (latest.includes("周日")) assert(system.includes("是，周日见"));
+      // Mock replies test that validation permits all three outcomes.
+      return completion({ content: reply });
+    };
+    assert.equal(await generatePlayReply({ persona, messages }), reply);
+    assert.equal(calls, 1);
+  }
+});
+
+test("skepticism purpose addresses conversational tone without suggesting an identity claim", async () => {
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    const purpose = body.messages[0].content.split("【参考结束】")[1];
+    assert.match(purpose, /说话生硬.*语气/u);
+    assert.doesNotMatch(purpose, /AI|身份|真人/iu);
+    assert.deepEqual(body.messages.slice(1), [
+      { role: "user", content: "一眼ai" },
+    ]);
+    return completion({ content: "行 我自然点" });
+  };
+  await generatePlayReply({
+    persona: context.persona,
+    messages: [{ speaker: "FRIEND", text: "一眼ai" }],
+  });
+});
+
 test("repeated style failures never leak an invalid reply or get unlimited retries", async () => {
   let calls = 0;
   globalThis.fetch = async () => {
@@ -498,8 +597,8 @@ test("longer or expressive speaker evidence is respected instead of enforcing on
   globalThis.fetch = async (_input, init) => {
     calls++;
     const system = JSON.parse(String(init?.body)).messages[0].content;
-    assert(!system.includes("示例无表情图标"));
-    assert(system.includes("表达示例仅教你怎么说"));
+    assert(!system.includes("无表情图标"));
+    assert.match(system, /只学示例.*接话.*措辞/u);
     return completion({
       content: "好呀，我觉得可以慢慢走过去，时间还早，到了再决定吃什么就好😊",
     });
@@ -693,7 +792,7 @@ test("frozen games reject model or distillation version drift before inference",
     {
       generationPolicy: {
         ...playGenerationPolicy(),
-        promptVersion: "old-prompt",
+        promptVersion: "speaker-reply-v2",
       },
     },
   ])

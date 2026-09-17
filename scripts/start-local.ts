@@ -10,6 +10,7 @@ import EmbeddedPostgres from "embedded-postgres";
 import {
   ensureLocalModelService,
   localModelConfiguration,
+  preloadLocalModel,
   type LocalModelService,
 } from "./local-model-runtime";
 
@@ -271,6 +272,7 @@ async function main() {
   ensureRunning();
   const modelConfig = localModelConfiguration(root);
   if (modelConfig) {
+    const resident = process.env.PLAY_MODEL_RESIDENT === "1";
     try {
       localModelStarting = ensureLocalModelService(
         modelConfig,
@@ -278,12 +280,25 @@ async function main() {
         localModelAbort.signal,
       );
       localModel = await localModelStarting;
+      if (resident) {
+        stage = "local model preload";
+        if (!localModel)
+          throw new Error("Resident model service is unavailable.");
+        ensureRunning();
+        console.log(
+          "[model] Preloading the resident local model before starting the app.",
+        );
+        await preloadLocalModel(modelConfig, localModelAbort.signal);
+        ensureRunning();
+        console.log("[model] Resident local model preloaded.");
+      }
       console.log(
         localModel
           ? `[model] ${localModel.owned ? "Started" : "Reusing"} local Ollama; model availability is shown in /play.`
           : "[model] No local Ollama runtime found. Run npm run model:setup to prepare it.",
       );
     } catch (error) {
+      if (resident || localModelAbort.signal.aborted) throw error;
       console.warn(
         `[model] ${error instanceof Error ? error.message : "Local model startup failed."} The app will show model setup status.`,
       );
@@ -322,7 +337,10 @@ if (
     const interrupted = stopping;
     if (!interrupted)
       console.error(
-        `[study] Local startup failed during ${stage}. Check the configured application/database ports and supported PostgreSQL binaries, or set an external DATABASE_URL.`,
+        stage.startsWith("local model") &&
+          process.env.PLAY_MODEL_RESIDENT === "1"
+          ? `[study] Local startup failed during ${stage}. Resident mode requires a running local Ollama service and successful model preloading before the app starts.`
+          : `[study] Local startup failed during ${stage}. Check the configured application/database ports and supported PostgreSQL binaries, or set an external DATABASE_URL.`,
       );
     await stop();
     process.exit(failureExitCode || (interrupted ? 0 : 1));
