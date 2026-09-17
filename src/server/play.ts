@@ -1,4 +1,4 @@
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { Prisma, type PlayPersona, type PlayRoom } from "@prisma/client";
 import { z } from "zod";
 import {
@@ -28,6 +28,12 @@ import {
   resolvePlayStyle,
   summarizePlayStyle,
 } from "./play-style";
+import {
+  completePlayAllocation,
+  PlayAllocationError,
+  preparePlayAllocation,
+  type PlayAllocationPolicy,
+} from "./play-allocation";
 
 export const PLAY_HOST_TIMEOUT_MS = 90_000;
 export const PLAY_REPLY_TIMEOUT_MS = 120_000;
@@ -38,6 +44,7 @@ type Tx = Prisma.TransactionClient;
 type FrozenPlayPersona = PlayPersonaInput & {
   styleProfile?: unknown;
   generationPolicy?: unknown;
+  allocationPolicy?: PlayAllocationPolicy;
 };
 const messageInclude = { messages: { orderBy: { sequence: "asc" as const } } };
 type RoomWithMessages = Prisma.PlayRoomGetPayload<{
@@ -120,6 +127,8 @@ async function mutation<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
       { maxWait: 10000, timeout: 15000 },
     );
   } catch (error) {
+    if (error instanceof PlayAllocationError)
+      throw new GatewayError(409, "INVALID_STATE");
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
@@ -480,17 +489,40 @@ export async function createPlayRoom(actor: Actor) {
       "ROOM_EXISTS",
       409,
     );
+    // A new policy also respects a run of AI games from the previous policy.
+    // Once initialized, the durable plan survives room deletion and restarts.
+    let initialTrailingAI = 0;
+    if (persona.allocationState === null) {
+      const recent = await tx.playRoom.findMany({
+        where: { ownerId: actor.id, turnsCompleted: PLAY_TURNS },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: 4,
+        select: { mode: true },
+      });
+      for (const previous of recent) {
+        if (previous.mode !== "AI") break;
+        initialTrailingAI++;
+      }
+    }
+    const allocation = preparePlayAllocation(persona.allocationState, {
+      initialTrailingAI,
+    });
+    await tx.playPersona.update({
+      where: { ownerId: actor.id },
+      data: { allocationState: JSON.parse(JSON.stringify(allocation.state)) },
+    });
     const token = randomBytes(32).toString("hex");
     const room = await tx.playRoom.create({
       data: {
         ownerId: actor.id,
-        mode: randomInt(2) === 0 ? "HUMAN" : "AI",
+        mode: allocation.mode,
         inviteHash: hashPlayToken(token),
         personaSnapshot: JSON.parse(
           JSON.stringify({
             ...personaInput(persona),
             styleProfile,
             generationPolicy: playGenerationPolicy(),
+            allocationPolicy: allocation.policy,
           }),
         ),
         expiresAt: new Date(Date.now() + PLAY_INVITE_LIFETIME_MS),
@@ -635,6 +667,26 @@ async function commitReply(
   text: string,
   idempotencyKey: string,
 ) {
+  if (room.turnsCompleted + 1 === PLAY_TURNS) {
+    const snapshot = room.personaSnapshot as unknown as FrozenPlayPersona;
+    // Rooms created before this policy keep their original identity and do not
+    // consume a slot from a subsequently initialized allocation plan.
+    if (Object.prototype.hasOwnProperty.call(snapshot, "allocationPolicy")) {
+      const persona = await tx.playPersona.findUniqueOrThrow({
+        where: { ownerId: room.ownerId },
+        select: { allocationState: true },
+      });
+      const next = completePlayAllocation(
+        persona.allocationState,
+        snapshot.allocationPolicy,
+        room.mode,
+      );
+      await tx.playPersona.update({
+        where: { ownerId: room.ownerId },
+        data: { allocationState: JSON.parse(JSON.stringify(next)) },
+      });
+    }
+  }
   await tx.playMessage.create({
     data: {
       roomId: room.id,

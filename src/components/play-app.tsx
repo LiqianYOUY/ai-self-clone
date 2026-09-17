@@ -2136,13 +2136,13 @@ export function HostPlayApp({
               </h2>
               <p>
                 {t(
-                  "每局随机由你本人或 AI 回复。",
-                  "Each game randomly assigns replies to you or AI.",
+                  "每 5 局完整对话中，1–2 局由你回复，其余由 AI 回复，顺序随机。",
+                  "Each group of 5 completed conversations includes 1–2 games you answer and the rest answered by AI, in random order.",
                 )}
                 <br />
                 {t(
-                  "一次一个朋友，一共五轮对话。",
-                  "One friend, five rounds of conversation.",
+                  "一次一个朋友，每局五轮。请保持页面在线，轮到本人局时亲自回复。",
+                  "One friend and five exchanges per game. Keep this page open and reply yourself in human games.",
                 )}
               </p>
               <button

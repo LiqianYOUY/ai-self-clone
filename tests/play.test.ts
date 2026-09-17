@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Actor } from "../src/server/auth";
 import type { PlayIdentity, PlayRoomDto } from "../src/domain/play";
+import { PLAY_ALLOCATION_VERSION } from "../src/server/play-allocation";
 
 // Every integration record belongs to this disposable schema, never the app schema.
 const password = existsSync(".local/database-password")
@@ -95,12 +96,30 @@ async function host() {
   await api.heartbeatPlayHost(actor, true);
   return actor;
 }
+async function fixtureNextMode(actor: Actor, mode: PlayIdentity) {
+  // Seed a legal private plan in this disposable schema before creation.
+  // Never mutate a frozen production room's identity or allocation metadata.
+  await db.playPersona.update({
+    where: { ownerId: actor.id },
+    data: {
+      allocationState: {
+        version: PLAY_ALLOCATION_VERSION,
+        blockId: randomUUID().replaceAll("-", ""),
+        order:
+          mode === "HUMAN"
+            ? ["HUMAN", "AI", "AI", "AI", "AI"]
+            : ["AI", "HUMAN", "AI", "AI", "AI"],
+        nextIndex: 0,
+      },
+    },
+  });
+}
 async function room(mode: PlayIdentity = "HUMAN", owner?: Actor) {
   const actor = owner ?? (await host());
   await api.heartbeatPlayHost(actor, true);
+  await fixtureNextMode(actor, mode);
   const created = await api.createPlayRoom(actor);
-  // Branch control is a fixture-only DB operation; production accepts no mode.
-  await db.playRoom.update({ where: { id: created.room.id }, data: { mode } });
+  assert.equal(created.room.mode, mode);
   const token = new URL(created.url, "http://127.0.0.1:3000").hash.split(
     "token=",
   )[1];
@@ -609,9 +628,10 @@ test("host timeout cancels both identities with the same public state", async ()
 test("host polling retains waiting and active rooms with null or unexpired pending timestamps", async () => {
   for (const mode of ["HUMAN", "AI"] as const) {
     const actor = await host();
+    await fixtureNextMode(actor, mode);
     const created = await api.createPlayRoom(actor);
     const roomId = created.room.id;
-    await db.playRoom.update({ where: { id: roomId }, data: { mode } });
+    assert.equal(created.room.mode, mode);
     const token = new URL(created.url).hash.split("token=")[1];
     async function visible(status: "WAITING" | "ACTIVE", pending: boolean) {
       const stored = await db.playRoom.findUniqueOrThrow({

@@ -1,4 +1,4 @@
-/** Real local/private-model HTTP smoke: two five-turn games in a disposable DB schema. */
+/** Real model HTTP smoke: one naturally allocated five-game block in a disposable schema. */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -325,10 +325,13 @@ async function waitForTurn(
   throw new Error("Reply not delivered within 90 seconds");
 }
 
-async function playGame(mode: PlayIdentity, ownerId: string) {
-  stage = `${mode} invite and guest cookie`;
+async function playGame(ownerId: string): Promise<PlayIdentity> {
+  stage = "naturally allocated invite and guest cookie";
   await command("heartbeat", { online: true });
   const invitation = await command("create_room");
+  const mode = invitation.room.mode as PlayIdentity;
+  assert(mode === "HUMAN" || mode === "AI");
+  stage = `${mode} invite and guest cookie`;
   const url = new URL(invitation.url);
   assert.equal(url.origin, origin);
   assert.equal(url.pathname, "/play/join");
@@ -344,8 +347,7 @@ async function playGame(mode: PlayIdentity, ownerId: string) {
     ownerId,
     "HTTP server must use our isolated schema",
   );
-  // This fixture-only DB write chooses a branch; the production API accepts no mode.
-  await db!.playRoom.update({ where: { id: roomId }, data: { mode } });
+  assert.equal(stored.mode, mode);
   const guestCookies: Jar = new Map();
   const preview = await command("inspect_invite", { token }, guestCookies);
   assert.deepEqual(
@@ -472,6 +474,7 @@ async function playGame(mode: PlayIdentity, ownerId: string) {
   );
   assert.equal(await db!.playMessage.count({ where: { roomId } }), 10);
   checked(`${mode}: sixth turn blocked and identity revealed only after guess`);
+  return mode;
 }
 
 async function main() {
@@ -619,23 +622,34 @@ async function main() {
   checked(
     "host cookie, synthetic persona and requested real provider readiness",
   );
-  await playGame("HUMAN", ownerId);
-  await playGame("AI", ownerId);
+  const identities: PlayIdentity[] = [];
+  for (let game = 0; game < 5; game++) identities.push(await playGame(ownerId));
+  const humanGames = identities.filter((mode) => mode === "HUMAN").length;
+  const aiGames = identities.length - humanGames;
+  assert(humanGames === 1 || humanGames === 2);
+  const allocated = await db.playPersona.findUniqueOrThrow({
+    where: { ownerId },
+  });
+  const allocation = allocated.allocationState as { nextIndex: number };
+  assert.equal(allocation.nextIndex, 5);
+  checked(
+    `five naturally allocated games include ${humanGames} human and ${aiGames} real AI games`,
+  );
 
   stage = "separate statistics denominators and database isolation";
   assert(!heartbeatError);
   const final = await get("home");
   assert.equal(final.activeRoom, null);
   assert.deepEqual(final.stats, {
-    completed: 2,
+    completed: 5,
     cancelled: 0,
-    aiRounds: 1,
-    humanRounds: 1,
+    aiRounds: aiGames,
+    humanRounds: humanGames,
     aiFooledRate: 1,
     humanRecognizedRate: 1,
   });
-  assert.equal(await db.playRoom.count({ where: { status: "REVEALED" } }), 2);
-  assert.equal(await db.playMessage.count(), 20);
+  assert.equal(await db.playRoom.count({ where: { status: "REVEALED" } }), 5);
+  assert.equal(await db.playMessage.count(), 50);
   assert.equal(await db.session.count(), 0);
   assert.equal(await db.preparationRoom.count(), 0);
   const publicRows = await admin.$queryRawUnsafe<Array<{ count: bigint }>>(
@@ -644,10 +658,10 @@ async function main() {
   );
   assert.equal(Number(publicRows[0].count), 0);
   checked(
-    "two completed games, separate rates and no public or research records",
+    "five completed games, separate rates and no public or research records",
   );
   console.log(
-    `Play HTTP smoke: ${checks.length}/${checks.length} checks passed; 10/10 turns delivered, including 5 real ${modelSettings.kind} AI replies.`,
+    `Play HTTP smoke: ${checks.length}/${checks.length} checks passed; 25/25 turns delivered, including ${aiGames * 5} real ${modelSettings.kind} AI replies.`,
   );
   if (process.env.PLAY_SMOKE_HOLD === "true") {
     stage = "holding successful isolated smoke for visual inspection";
