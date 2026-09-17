@@ -2,8 +2,17 @@
 
 import { SelfBrand } from "./self-brand";
 import { LanguageSwitch, useLanguage } from "./language-provider";
+import {
+  generatedReplyPolicy,
+  playProcessingCopy,
+  type PlayProcessingKind,
+} from "./play-model-copy";
 
-export function PrivacyNotice() {
+export function PrivacyNotice({
+  processingKind,
+}: {
+  processingKind: PlayProcessingKind;
+}) {
   const { t } = useLanguage();
   return (
     <main className="play-root privacy-page">
@@ -47,10 +56,12 @@ export function PrivacyNotice() {
               "The system stores a password hash, nickname, persona, conversation examples, chat, guesses and results. Guests need no account and use a private invitation and session to access their game. Hosts can view their own records. The project operator can access experiment data for maintenance and analysis. Personal information is not made public.",
             )}
           </p>
+          <p>{t(...playProcessingCopy(processingKind))}</p>
+          <p>{t(...generatedReplyPolicy)}</p>
           <p>
             {t(
-              "当前在线版在树莓派本地生成 AI 回复，不将聊天提交到外部模型接口。公开 GitHub 仓库仅备份代码、部署文件和文档，不包含参与者数据、数据库或密钥。",
-              "The current online version generates AI replies locally on the Raspberry Pi, without sending chats to an external model API. The public GitHub repository contains code, deployment files and documentation, not participant data, databases or secrets.",
+              "公开 GitHub 仓库仅备份代码、部署文件和文档，不包含参与者数据、数据库或密钥。",
+              "The public GitHub repository contains code, deployment files and documentation, not participant data, databases or secrets.",
             )}
           </p>
         </section>

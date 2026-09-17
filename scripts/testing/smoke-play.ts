@@ -1,4 +1,4 @@
-/** Real local-model HTTP smoke: two five-turn games in a disposable DB schema. */
+/** Real local/private-model HTTP smoke: two five-turn games in a disposable DB schema. */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { PrismaClient } from "@prisma/client";
 import type { PlayIdentity, PlayRoomDto } from "../../src/domain/play";
 
@@ -18,8 +19,6 @@ const buildDirectory = process.env.PLAY_SMOKE_BUILD_DIR ?? ".cache/production";
 const schema = `play_http_${process.pid}_${randomBytes(5).toString("hex")}`;
 const username = `play_smoke_${randomBytes(6).toString("hex")}`;
 const password = randomBytes(24).toString("base64url");
-const localModel = process.env.PLAY_SMOKE_MODEL ?? "qwen3.5:4b";
-const localBase = process.env.PLAY_SMOKE_OLLAMA_URL ?? "http://127.0.0.1:11434";
 const hostCookies: Jar = new Map();
 const checks: string[] = [];
 const delay = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
@@ -34,6 +33,117 @@ let heartbeat: ReturnType<typeof setInterval> | undefined;
 let heartbeatWork: Promise<void> | undefined;
 let heartbeatError = false;
 const abort = new AbortController();
+
+export interface SmokeModelSettings {
+  kind: "ollama" | "private-ollama";
+  origin: string;
+  model: string;
+  apiKey: string;
+}
+
+/** Private mode is explicit; the default never inherits a remote provider or key. */
+export function smokeModelSettings(
+  env: Readonly<Record<string, string | undefined>>,
+): SmokeModelSettings {
+  const kind = env.PLAY_SMOKE_PROVIDER ?? "ollama";
+  assert(
+    kind === "ollama" || kind === "private-ollama",
+    "Unsupported smoke provider",
+  );
+  const privateMode = kind === "private-ollama";
+  const model =
+    env.PLAY_SMOKE_MODEL ?? (privateMode ? env.PLAY_MODEL_NAME : "qwen3.5:4b");
+  const base = privateMode
+    ? env.PLAY_MODEL_BASE_URL
+    : (env.PLAY_SMOKE_OLLAMA_URL ?? "http://127.0.0.1:11434");
+  const apiKey = privateMode ? (env.PLAY_MODEL_API_KEY ?? "") : "";
+  assert(
+    model && !/[\s\p{C}]/u.test(model) && model.length <= 200,
+    "Requested model is required",
+  );
+  assert(
+    !/(?:^|[:/-])cloud(?:$|[:/-])/i.test(model),
+    "Only an installed local model is allowed",
+  );
+  assert(base, "Model connection is required");
+  let endpoint: URL;
+  try {
+    endpoint = new URL(base);
+  } catch {
+    throw new Error("Invalid model connection");
+  }
+  assert(
+    ["127.0.0.1", "localhost", "[::1]"].includes(endpoint.hostname),
+    "Only a loopback model connection is allowed",
+  );
+  assert.equal(
+    endpoint.protocol,
+    "http:",
+    "Loopback model connection must use HTTP",
+  );
+  assert(
+    !endpoint.username &&
+      !endpoint.password &&
+      !endpoint.search &&
+      !endpoint.hash &&
+      endpoint.pathname === "/",
+    "Model connection must be a plain origin",
+  );
+  if (privateMode)
+    assert(
+      /^[\x21-\x7e]{32,512}$/.test(apiKey),
+      "Private model credential is required",
+    );
+  return { kind, origin: endpoint.origin, model, apiKey };
+}
+
+/** This is an authenticated live check, never a local-model fallback. */
+export async function verifySmokeModel(
+  settings: SmokeModelSettings,
+  options: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {},
+) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const signal = AbortSignal.any([
+    ...(options.signal ? [options.signal] : []),
+    AbortSignal.timeout(settings.kind === "private-ollama" ? 10_000 : 3_000),
+  ]);
+  const headers: Record<string, string> =
+    settings.kind === "private-ollama"
+      ? { authorization: `Bearer ${settings.apiKey}` }
+      : {};
+  const wanted = settings.model.includes(":")
+    ? settings.model
+    : `${settings.model}:latest`;
+  const localMatch = (item: Data) =>
+    item &&
+    (item.name === wanted || item.model === wanted) &&
+    !item.remote_host &&
+    !item.remote_model;
+  const paths =
+    settings.kind === "private-ollama"
+      ? ["/api/tags", "/api/ps"]
+      : ["/api/tags"];
+  for (const path of paths) {
+    const response = await fetchImpl(settings.origin + path, {
+      signal,
+      redirect: "error",
+      headers,
+    });
+    assert.equal(response.status, 200, "Requested model health check failed");
+    const data = await response.json();
+    assert(
+      Array.isArray(data.models) &&
+        data.models.some(
+          (item: Data) =>
+            localMatch(item) &&
+            (path !== "/api/ps" ||
+              (typeof item.expires_at === "string" &&
+                Date.parse(item.expires_at) > Date.now())),
+        ),
+      "Requested model must be installed and, in private mode, resident; smoke must not skip AI",
+    );
+  }
+}
 
 function checked(name: string) {
   checks.push(name);
@@ -372,33 +482,13 @@ async function main() {
   );
   stage = "unused isolated loopback port 3305";
   await availablePort();
-  stage = "local Ollama readiness: requested model must already be installed";
-  const ollama = new URL(localBase);
-  assert(["127.0.0.1", "localhost", "[::1]"].includes(ollama.hostname));
-  assert.equal(ollama.protocol, "http:");
-  assert(
-    !ollama.username && !ollama.password && !ollama.search && !ollama.hash,
-  );
-  assert(!/(?:^|[:/-])cloud(?:$|[:/-])/i.test(localModel));
-  const response = await fetch(ollama.origin + "/api/tags", {
-    signal: AbortSignal.timeout(3000),
-    redirect: "error",
-  });
-  assert.equal(response.status, 200);
-  const tags = await response.json();
-  const wanted = localModel.includes(":") ? localModel : `${localModel}:latest`;
-  assert(
-    Array.isArray(tags.models) &&
-      tags.models.some(
-        (item: Data) =>
-          (item.name === wanted || item.model === wanted) &&
-          !item.remote_host &&
-          !item.remote_model,
-      ),
-    "Requested local model is not installed; smoke must not skip AI",
-  );
+  stage = "requested model configuration and live readiness";
+  const modelSettings = smokeModelSettings(process.env);
+  await verifySmokeModel(modelSettings, { signal: abort.signal });
   checked(
-    "real Ollama model is installed locally; no cloud provider or API key",
+    modelSettings.kind === "private-ollama"
+      ? "private model authenticated tags and resident checks passed; no local fallback"
+      : "real Ollama model is installed locally; no cloud provider or API key",
   );
 
   const localPassword = process.env.DATABASE_URL
@@ -429,10 +519,10 @@ async function main() {
     STUDY_MODE: "synthetic",
     NEXT_TELEMETRY_DISABLED: "1",
     PORTAL_BOOTSTRAP_ENABLED: "false",
-    PLAY_MODEL_PROVIDER: "ollama",
-    PLAY_MODEL_BASE_URL: ollama.origin,
-    PLAY_MODEL_NAME: localModel,
-    PLAY_MODEL_API_KEY: "",
+    PLAY_MODEL_PROVIDER: modelSettings.kind,
+    PLAY_MODEL_BASE_URL: modelSettings.origin,
+    PLAY_MODEL_NAME: modelSettings.model,
+    PLAY_MODEL_API_KEY: modelSettings.apiKey,
   };
   const suffix = process.arch === "arm64" ? "darwin-arm64" : "darwin";
   const schemaEngine = resolve(
@@ -513,8 +603,8 @@ async function main() {
   await command("heartbeat", { online: true });
   const home = await get("home");
   assert.equal(home.providerReady, true);
-  assert.equal(home.providerStatus.kind, "ollama");
-  assert.equal(home.providerStatus.model, localModel);
+  assert.equal(home.providerStatus.kind, modelSettings.kind);
+  assert.equal(home.providerStatus.model, modelSettings.model);
   heartbeat = setInterval(() => {
     if (heartbeatWork || abort.signal.aborted) return;
     heartbeatWork = command("heartbeat", { online: true })
@@ -526,7 +616,9 @@ async function main() {
         heartbeatWork = undefined;
       });
   }, 10_000);
-  checked("host cookie, synthetic persona and real local provider readiness");
+  checked(
+    "host cookie, synthetic persona and requested real provider readiness",
+  );
   await playGame("HUMAN", ownerId);
   await playGame("AI", ownerId);
 
@@ -555,7 +647,7 @@ async function main() {
     "two completed games, separate rates and no public or research records",
   );
   console.log(
-    `Play HTTP smoke: ${checks.length}/${checks.length} checks passed; 10/10 turns delivered, including 5 real local AI replies.`,
+    `Play HTTP smoke: ${checks.length}/${checks.length} checks passed; 10/10 turns delivered, including 5 real ${modelSettings.kind} AI replies.`,
   );
   if (process.env.PLAY_SMOKE_HOLD === "true") {
     stage = "holding successful isolated smoke for visual inspection";
@@ -594,32 +686,37 @@ async function cleanup() {
   await admin?.$disconnect();
 }
 
-process.once("SIGINT", () => abort.abort());
-process.once("SIGTERM", () => abort.abort());
-main()
-  .catch((error: unknown) => {
-    // Never print DB credentials, cookies, invitation tokens, request bodies or model text.
-    console.error(
-      `Play HTTP smoke failed during: ${stage}. AI is never skipped when unavailable.`,
-    );
-    // Stack locations identify the failed check without printing assertion
-    // values, response bodies, credentials or model output.
-    if (error instanceof Error) {
-      const locations = error.stack
-        ?.split("\n")
-        .filter((line) => /^\s+at /.test(line))
-        .slice(0, 5);
-      if (locations?.length) console.error(locations.join("\n"));
-    }
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    try {
-      await cleanup();
-    } catch {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  process.once("SIGINT", () => abort.abort());
+  process.once("SIGTERM", () => abort.abort());
+  main()
+    .catch((error: unknown) => {
+      // Never print DB credentials, cookies, invitation tokens, request bodies or model text.
       console.error(
-        `Play smoke cleanup failed; inspect only disposable schema ${schema}.`,
+        `Play HTTP smoke failed during: ${stage}. AI is never skipped when unavailable.`,
       );
+      // Stack locations identify the failed check without printing assertion
+      // values, response bodies, credentials or model output.
+      if (error instanceof Error) {
+        const locations = error.stack
+          ?.split("\n")
+          .filter((line) => /^\s+at /.test(line))
+          .slice(0, 5);
+        if (locations?.length) console.error(locations.join("\n"));
+      }
       process.exitCode = 1;
-    }
-  });
+    })
+    .finally(async () => {
+      try {
+        await cleanup();
+      } catch {
+        console.error(
+          `Play smoke cleanup failed; inspect only disposable schema ${schema}.`,
+        );
+        process.exitCode = 1;
+      }
+    });
+}

@@ -28,6 +28,8 @@ const translations = {
     privacyTitle: "你的资料，只用于这次研究。",
     privacyBody:
       "无需真实姓名、邮箱或手机号，请勿填写可识别身份的信息。资料仅用于本实验及相关分析，实验与分析完成后删除，个人信息不会公开。",
+    privacyProcessing:
+      "在线版网页和实验记录在项目树莓派。分身参考资料和当前对话经加密连接交由项目 Mac 的本机模型处理，不使用云端模型。AI 回复不会自动成为表达示例或训练资料。",
     privacyLink: "查看完整隐私说明",
     footer: "Self · AI 与真人互动实验",
     documents: "项目文档",
@@ -61,6 +63,8 @@ const translations = {
     privacyTitle: "Your data is for this study only.",
     privacyBody:
       "No real name, email address or phone number is required. Please do not enter identifying information. Data is used only for this study and its analysis, and will be deleted when both are complete. Personal information will not be published.",
+    privacyProcessing:
+      "The online website and experiment records are hosted on the project Raspberry Pi. Persona references and the current conversation go over an encrypted connection to a model running locally on the project Mac. No cloud model is used. AI replies do not automatically become speaking examples or training material.",
     privacyLink: "Read the full privacy notice",
     footer: "Self · Human–AI interaction study",
     documents: "Project documents",

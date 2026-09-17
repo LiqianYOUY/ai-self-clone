@@ -27,9 +27,12 @@ export function localModelConfiguration(
   const provider =
     process.env.PLAY_MODEL_PROVIDER?.trim() ||
     (explicitBase ? "compatible" : "ollama");
-  if (provider === "compatible") return null;
+  // A private gateway has its own lifecycle; never start a local fallback on Pi.
+  if (provider === "compatible" || provider === "private-ollama") return null;
   if (provider !== "ollama")
-    throw new Error("PLAY_MODEL_PROVIDER must be ollama or compatible.");
+    throw new Error(
+      "PLAY_MODEL_PROVIDER must be ollama, private-ollama or compatible.",
+    );
   const base = new URL(explicitBase || "http://127.0.0.1:11434");
   if (
     base.protocol !== "http:" ||

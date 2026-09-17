@@ -8,6 +8,7 @@
     "dev:app": "node --import tsx src/server/main.ts",
     "model:setup": "node --import tsx scripts/setup-local-model.ts",
     "model:start": "node --import tsx scripts/start-local-model.ts",
+    "model:serve:private": "node --import tsx scripts/start-private-model-server.ts",
     "build": "prisma generate && next build --webpack",
     "start": "NODE_ENV=production node --import tsx src/server/main.ts",
     "db:generate": "prisma generate",

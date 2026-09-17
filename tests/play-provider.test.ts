@@ -361,10 +361,11 @@ test("Ollama truncated or thinking-only responses never become chat replies", as
 });
 
 test("a truncated response is discarded and retried once with a shorter prompt and enough tokens", async () => {
-  for (const provider of ["compatible", "ollama"] as const) {
+  for (const provider of ["compatible", "ollama", "private-ollama"] as const) {
     process.env.PLAY_MODEL_PROVIDER = provider;
+    process.env.PLAY_MODEL_API_KEY = "test-private-gateway-token-32-characters";
     process.env.PLAY_MODEL_BASE_URL =
-      provider === "ollama"
+      provider !== "compatible"
         ? "http://127.0.0.1:11434"
         : "https://provider.example/v1";
     let calls = 0;
@@ -372,7 +373,7 @@ test("a truncated response is discarded and retried once with a shorter prompt a
       calls++;
       const body = JSON.parse(String(init?.body));
       assert.equal(
-        provider === "ollama" ? body.options.num_predict : body.max_tokens,
+        provider !== "compatible" ? body.options.num_predict : body.max_tokens,
         calls === 1 ? 512 : 768,
       );
       assert.equal(body.messages.length, context.messages.length + 1);
@@ -381,7 +382,7 @@ test("a truncated response is discarded and retried once with a shorter prompt a
         assert(body.messages[0].content.includes("24 个字符以内"));
       const content = calls === 1 ? "不完整的消息" : "好，老时间见";
       const finish_reason = calls === 1 ? "length" : "stop";
-      return provider === "ollama"
+      return provider !== "compatible"
         ? Response.json({
             message: { content },
             done: true,
@@ -833,10 +834,16 @@ test("external abort before a request or during retry delay prevents further pro
 test("attempt timeouts can retry but both attempts share a deadline shorter than the route lifetime", async () => {
   const originalTimeout = AbortSignal.timeout;
   try {
-    for (const provider of ["compatible", "ollama"] as const) {
+    for (const provider of [
+      "compatible",
+      "ollama",
+      "private-ollama",
+    ] as const) {
       process.env.PLAY_MODEL_PROVIDER = provider;
+      process.env.PLAY_MODEL_API_KEY =
+        "test-private-gateway-token-32-characters";
       process.env.PLAY_MODEL_BASE_URL =
-        provider === "ollama"
+        provider !== "compatible"
           ? "http://127.0.0.1:11434"
           : "https://provider.example/v1";
       const timers: { milliseconds: number; controller: AbortController }[] =
@@ -857,7 +864,7 @@ test("attempt timeouts can retry but both attempts share a deadline shorter than
         assert.equal(init?.signal?.aborted, false);
         // Even a provider completing after the overall deadline cannot return text.
         timers[0].controller.abort();
-        return provider === "ollama"
+        return provider !== "compatible"
           ? Response.json({
               message: { content: "迟到的回答" },
               done: true,
@@ -873,7 +880,7 @@ test("attempt timeouts can retry but both attempts share a deadline shorter than
       assert.equal(calls, 2);
       assert.deepEqual(
         timers.map(({ milliseconds }) => milliseconds),
-        provider === "ollama"
+        provider !== "compatible"
           ? [75_000, 60_000, 60_000]
           : [45_000, 30_000, 30_000],
       );

@@ -87,7 +87,7 @@ export interface PlayHomeDto {
 }
 
 export interface PlayProviderStatus {
-  kind: "ollama" | "compatible";
+  kind: "ollama" | "private-ollama" | "compatible";
   ready: boolean;
   model: string | null;
   message: string;

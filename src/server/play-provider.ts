@@ -206,7 +206,7 @@ function configuration() {
   const kind =
     process.env.PLAY_MODEL_PROVIDER?.trim() ||
     (explicitBase ? "compatible" : "ollama");
-  if (kind !== "ollama" && kind !== "compatible") return null;
+  if (!["ollama", "private-ollama", "compatible"].includes(kind)) return null;
   const base =
     explicitBase || (kind === "ollama" ? "http://127.0.0.1:11434" : "");
   const key = process.env.PLAY_MODEL_API_KEY?.trim();
@@ -216,6 +216,12 @@ function configuration() {
   if (
     !base ||
     (kind === "compatible" && !key) ||
+    (kind === "private-ollama" &&
+      (!key ||
+        process.env.PLAY_MODEL_API_KEY !== key ||
+        key.length < 32 ||
+        key.length > 512 ||
+        /[^\x21-\x7e]/.test(key))) ||
     !model ||
     model.length > 200 ||
     /[\r\n]/.test(key ?? "")
@@ -233,13 +239,28 @@ function configuration() {
       (!loopback || /(?:^|[:/-])cloud(?:$|[:/-])/i.test(model))
     )
       return null;
+    // This mode is an explicit authenticated gateway, not a relaxed local mode.
+    // Plain HTTP is allowed only through a loopback-bound encrypted tunnel.
+    if (
+      kind === "private-ollama" &&
+      (!explicitBase ||
+        url.protocol !== "http:" ||
+        !loopback ||
+        !["", "/"].includes(url.pathname) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9._-]+)?$/.test(model) ||
+        model.split("/").some((part) => part === "." || part === "..") ||
+        /(?:^|[:/._-])cloud(?:$|[:/._-])/i.test(model))
+    )
+      return null;
+    if (kind === "private-ollama" && url.hostname === "localhost")
+      url.hostname = "127.0.0.1";
     const origin = url.origin;
     url.pathname =
-      kind === "ollama"
+      kind !== "compatible"
         ? "/api/chat"
         : `${url.pathname.replace(/\/+$/, "")}/chat/completions`;
     return {
-      kind: kind as "ollama" | "compatible",
+      kind: kind as PlayProviderStatus["kind"],
       endpoint: url.toString(),
       origin,
       key,
@@ -267,15 +288,74 @@ export function playGenerationPolicy() {
 let availabilityCache:
   { key: string; until: number; value: PlayProviderStatus } | undefined;
 
+/** Gateway metadata is bounded, authenticated, and never returned to participants. */
+async function privateModelMetadata(
+  origin: string,
+  endpoint: "/api/tags" | "/api/ps",
+  key: string,
+  signal: AbortSignal,
+): Promise<unknown> {
+  const response = await fetch(`${origin}${endpoint}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${key}` },
+    signal,
+    redirect: "error",
+  });
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("unavailable");
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 16_384) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("unavailable");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  signal.throwIfAborted();
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function gatewayModelDigest(payload: unknown, wanted: string): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const models = (payload as { models?: unknown }).models;
+  // The private gateway only exposes its single allowlisted model.
+  if (!Array.isArray(models) || models.length !== 1) return null;
+  const item = models[0];
+  if (
+    !item ||
+    typeof item !== "object" ||
+    (item.name !== wanted && item.model !== wanted) ||
+    item.remote_host ||
+    item.remote_model ||
+    typeof item.digest !== "string" ||
+    !/^[a-f0-9]{64}$/i.test(item.digest)
+  )
+    return null;
+  return item.digest.toLowerCase();
+}
+
 /** Local readiness checks the installed model, rather than merely checking env vars. */
 export async function checkPlayProvider(): Promise<PlayProviderStatus> {
   const settings = configuration();
-  const kind =
-    process.env.PLAY_MODEL_PROVIDER === "compatible" ||
-    (!process.env.PLAY_MODEL_PROVIDER &&
-      !!process.env.PLAY_MODEL_BASE_URL?.trim())
-      ? "compatible"
-      : "ollama";
+  const kind: PlayProviderStatus["kind"] =
+    process.env.PLAY_MODEL_PROVIDER?.trim() === "private-ollama"
+      ? "private-ollama"
+      : process.env.PLAY_MODEL_PROVIDER?.trim() === "compatible" ||
+          (!process.env.PLAY_MODEL_PROVIDER &&
+            !!process.env.PLAY_MODEL_BASE_URL?.trim())
+        ? "compatible"
+        : "ollama";
   if (!settings)
     return {
       kind,
@@ -284,7 +364,9 @@ export async function checkPlayProvider(): Promise<PlayProviderStatus> {
       message:
         kind === "ollama"
           ? "请使用本机 Ollama 地址和本地模型名称。"
-          : "请在本地 .env 配置模型地址、名称和 API 密钥。",
+          : kind === "private-ollama"
+            ? "请配置专用模型网关地址、模型名称和认证令牌。"
+            : "请在本地 .env 配置模型地址、名称和 API 密钥。",
     };
   if (settings.kind === "compatible")
     return {
@@ -293,6 +375,43 @@ export async function checkPlayProvider(): Promise<PlayProviderStatus> {
       model: settings.model,
       message: "兼容模型接口已配置。",
     };
+  if (settings.kind === "private-ollama") {
+    // Do not cache private readiness: a disconnected tunnel or changed gateway
+    // token must be visible on the next check, even after a successful request.
+    try {
+      const signal = AbortSignal.timeout(2000);
+      const [tags, running] = await Promise.all([
+        privateModelMetadata(
+          settings.origin,
+          "/api/tags",
+          settings.key!,
+          signal,
+        ),
+        privateModelMetadata(settings.origin, "/api/ps", settings.key!, signal),
+      ]);
+      const wanted = settings.model.includes(":")
+        ? settings.model
+        : `${settings.model}:latest`;
+      const installedDigest = gatewayModelDigest(tags, wanted);
+      const loadedDigest = gatewayModelDigest(running, wanted);
+      const ready = !!installedDigest && installedDigest === loadedDigest;
+      return {
+        kind: "private-ollama",
+        ready,
+        model: settings.model,
+        message: ready
+          ? "专用模型已就绪，AI 回复由私有连接中的 Mac 处理。"
+          : "专用模型尚未就绪，请检查网关允许的模型和预热状态。",
+      };
+    } catch {
+      return {
+        kind: "private-ollama",
+        ready: false,
+        model: settings.model,
+        message: "专用模型暂时无法连接，请检查 Mac 服务和私有连接。",
+      };
+    }
+  }
   const cacheKey = `${settings.origin}:${settings.model}`;
   if (
     availabilityCache?.key === cacheKey &&
@@ -418,7 +537,7 @@ export async function generatePlayReply(
   const system = stylePrompt(persona, profile, messages, maxLength);
   // Keep both attempts inside the route's 90s lifetime and the room's 120s expiry.
   const totalTimeout = AbortSignal.timeout(
-    settings.kind === "ollama" ? 75_000 : 45_000,
+    settings.kind !== "compatible" ? 75_000 : 45_000,
   );
   const overallSignal = options.signal
     ? AbortSignal.any([options.signal, totalTimeout])
@@ -428,7 +547,7 @@ export async function generatePlayReply(
   for (let attempt = 0; attempt < 2; attempt++) {
     if (overallSignal.aborted) throw new PlayProviderError("UNAVAILABLE");
     const timeout = AbortSignal.timeout(
-      settings.kind === "ollama" ? 60_000 : 30_000,
+      settings.kind !== "compatible" ? 60_000 : 30_000,
     );
     const signal = AbortSignal.any([overallSignal, timeout]);
     const modelMessages = [
@@ -457,7 +576,7 @@ export async function generatePlayReply(
               : {}),
           },
           body: JSON.stringify(
-            settings.kind === "ollama"
+            settings.kind !== "compatible"
               ? {
                   model: settings.model,
                   stream: false,
@@ -514,7 +633,7 @@ export async function generatePlayReply(
       }
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const choice =
-        settings.kind === "ollama"
+        settings.kind !== "compatible"
           ? {
               message: payload?.message,
               finish_reason:

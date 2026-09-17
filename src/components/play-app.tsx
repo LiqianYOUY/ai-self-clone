@@ -39,6 +39,8 @@ import type {
 } from "@/domain/play";
 import { SelfBrand } from "@/components/self-brand";
 import { LanguageSwitch, useLanguage } from "@/components/language-provider";
+import { PlayModelNotice } from "@/components/play-model-notice";
+import type { PlayProcessingKind } from "@/components/play-model-copy";
 
 const API = "/api/play";
 const errorMessages: Record<string, readonly [string, string]> = {
@@ -269,9 +271,11 @@ function Loading() {
 function Auth({
   onSignedIn,
   networkError,
+  processingKind,
 }: {
   onSignedIn: () => Promise<void>;
   networkError: string;
+  processingKind: PlayProcessingKind;
 }) {
   const { t } = useLanguage();
   const [mode, setMode] = useState<"register" | "login">("register");
@@ -395,6 +399,7 @@ function Auth({
             </button>
           </div>
           <form className="play-form" onSubmit={submit}>
+            {mode === "register" && <PlayModelNotice kind={processingKind} />}
             {mode === "register" && (
               <label>
                 {t("游戏化名（非实名）", "Game alias (not your real name)")}
@@ -862,11 +867,13 @@ function PersonaEditor({
   styleSummary,
   name,
   onSaved,
+  processingKind,
 }: {
   persona: PlayPersonaInput | null;
   styleSummary: PlayStyleSummary | null;
   name: string;
   onSaved: () => Promise<void>;
+  processingKind: PlayProcessingKind;
 }) {
   const { t } = useLanguage();
   const [draft, setDraft] = useState<PlayPersonaInput>(
@@ -926,6 +933,7 @@ function PersonaEditor({
           "Saving extracts speaking patterns from your own messages and keeps examples of how you reply. Leave out real names, contact details and sensitive information.",
         )}
       </p>
+      <PlayModelNotice kind={processingKind} />
       <form className="play-form" onSubmit={submit}>
         <label>
           {t("游戏化名（非实名）", "Game alias (not your real name)")}
@@ -1863,7 +1871,11 @@ function Stats({
   );
 }
 
-export function HostPlayApp() {
+export function HostPlayApp({
+  processingKind,
+}: {
+  processingKind: PlayProcessingKind;
+}) {
   const { t } = useLanguage();
   const [home, setHome] = useState<PlayHomeDto | null>(null);
   const [deleted, setDeleted] = useState(false);
@@ -2003,7 +2015,14 @@ export function HostPlayApp() {
     ) : (
       <Loading />
     );
-  if (!home.actor) return <Auth onSignedIn={refresh} networkError={error} />;
+  if (!home.actor)
+    return (
+      <Auth
+        onSignedIn={refresh}
+        networkError={error}
+        processingKind={processingKind}
+      />
+    );
   const canCreate =
     home.providerReady &&
     home.online &&
@@ -2094,6 +2113,7 @@ export function HostPlayApp() {
           styleSummary={home.styleSummary || null}
           name={home.actor.pseudonym}
           onSaved={refresh}
+          processingKind={home.providerStatus?.kind || processingKind}
         />
         <div className="play-dashboard-right">
           {home.activeRoom ? (
@@ -2195,7 +2215,11 @@ export function HostPlayApp() {
 
 const JOIN_TOKEN_KEY = "self-play-pending-invitation";
 
-export function JoinPlayApp() {
+export function JoinPlayApp({
+  processingKind,
+}: {
+  processingKind: PlayProcessingKind;
+}) {
   const { t } = useLanguage();
   const [invitation, setInvitation] = useState<PlayInvitationDto | null>(null);
   const [token, setToken] = useState("");
@@ -2327,6 +2351,7 @@ export function JoinPlayApp() {
                 </span>
               </span>
             </div>
+            <PlayModelNotice kind={processingKind} />
             <form className="play-form" onSubmit={join}>
               <label>
                 {t("游戏化名（非实名）", "Game alias (not your real name)")}
