@@ -108,6 +108,31 @@ function labelKey(label: string): string {
     .toLocaleLowerCase("en");
 }
 
+function hasOverloadSignal(text: string): boolean {
+  // Treat overload as a conversational state, not a keyword in a definition,
+  // a negated state, or a positive use such as being overwhelmed with joy.
+  if (
+    /是什么|什么意思|啥意思|怎么翻译|如何翻译|怎么说|为什么|定义|原理|概念|症状|\b(?:what (?:is|are|does)|definition|meaning|translate|symptoms?|causes?)\b/iu.test(
+      text,
+    ) ||
+    /(?:不再|并不|不会|没有|没(?:有)?觉得|不觉得|并没有).{0,16}(?:压力|压得|压到|压垮|喘不过气|转不动|忙不过来|扛不住|撑不住)|\b(?:not|never|no longer|don't|do not|isn't|is not|aren't|are not)\b.{0,25}\b(?:overwhelmed|burn(?:ed|t)? out|under pressure|stressed)\b/iu.test(
+      text,
+    ) ||
+    /\boverwhelmed\s+(?:with|by)\s+(?:(?:so much|the|pure)\s+)?(?:joy|happiness|excitement|love|gratitude)\b/iu.test(
+      text,
+    )
+  )
+    return false;
+  return (
+    /(?:工作|任务|事情|压力|生活|学业|考试).{0,12}(?:压得|压到|压垮|喘不过气|忙不过来|应付不过来|招架不住|扛不住|撑不住)|(?:脑子|脑袋|大脑|头脑).{0,5}(?:转不动|不转了|一片空白|宕机|罢工)|(?:我|今天|最近).{0,8}(?:忙不过来|扛不住|撑不住|被压垮)|(?:工作|任务|事情|作业)(?:实在)?太多.{0,8}(?:做不完|忙不过来|应付不来)/u.test(
+      text,
+    ) ||
+    /\b(?:i(?:'m| am)?|feeling|feel)\s+(?:(?:so|really|very|completely|totally|a bit)\s+)?(?:overwhelmed|burn(?:ed|t) out|under pressure|swamped)\b|\b(?:work|tasks?|deadlines?)\s+(?:is |are )?(?:overwhelming|crushing)\s+me\b|^(?:overwhelmed|burn(?:ed|t) out|under pressure|swamped)(?:\s+(?:today|lately|again))?[.!\s]*$/iu.test(
+      text,
+    )
+  );
+}
+
 /** Shared conversational intent for retrieval and the reply's immediate goal. */
 export function classifyPlayStyleScene(text: string): PlayStyleScene {
   const value = text.trim();
@@ -133,9 +158,10 @@ export function classifyPlayStyleScene(text: string): PlayStyleScene {
     !/不(?:太|怎么|是|觉得|会)?累|不(?:太|怎么|是|觉得)?烦|不难过|没有不开心|\b(?:not|never) (?:tired|sad|upset|down|exhausted)\b/iu.test(
       value,
     ) &&
-    /(?:有点|有些|挺|很|太|好|特别|真(?:的)?)(?:累|烦|难过|沮丧|委屈|郁闷|失落)|(?:我|今天|最近).{0,8}(?:累了|烦死|难过|不开心|心情不好|压力大|提不起劲)|^(?:累了|烦死了|难过|不开心|心情不好|提不起劲|想静静)[。！!\s]*$|\b(?:(?:i(?:'m| am)?|feeling|feel|so|really|very|a bit) (?:tired|sad|upset|down|exhausted|stressed)|having a (?:rough|bad) day)\b/iu.test(
+    (/(?:有点|有些|挺|很|太|好|特别|真(?:的)?)(?:累|烦|难过|沮丧|委屈|郁闷|失落)|(?:我|今天|最近).{0,8}(?:累了|烦死|难过|不开心|心情不好|压力大|提不起劲)|^(?:累了|烦死了|难过|不开心|心情不好|提不起劲|想静静)[。！!\s]*$|\b(?:(?:i(?:'m| am)?|feeling|feel|so|really|very|a bit) (?:tired|sad|upset|down|exhausted|stressed)|having a (?:rough|bad) day)\b/iu.test(
       value,
-    )
+    ) ||
+      hasOverloadSignal(value))
   )
     return "low_mood";
   if (

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PlayPersonaInput } from "../src/domain/play";
 import {
+  classifyPlayStyleScene,
   distillPlayStyle,
   graphemeLength,
   PLAY_STYLE_VERSION,
@@ -314,6 +315,76 @@ test("short conversational paraphrases retrieve authentic reply pairs without ex
   assert.deepEqual(selectStyleExamples(profile, "天气预报说明天降温"), []);
   assert.deepEqual(selectStyleExamples(profile, "我很开心"), []);
   assert.deepEqual(selectStyleExamples(profile, "我不太累"), []);
+});
+
+test("pressure and overload paraphrases retrieve the host's real emotional response, never a greeting", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：好久没唠了\n我：是啊 最近咋样",
+        "朋友：今天有点烦\n我：咋啦 说来听听",
+        "朋友：feeling down today\n我：want to talk about it",
+        "朋友：hello\n我：hey how's it going",
+      ].join("\n\n"),
+    ),
+  );
+  for (const query of [
+    "今天被工作压得喘不过气，脑子都转不动了",
+    "这周任务压得我喘不过气",
+    "脑子已经转不动了",
+    "生活压得我扛不住了",
+    "最近忙不过来",
+    "工作太多根本做不完",
+  ]) {
+    assert.equal(classifyPlayStyleScene(query), "low_mood", query);
+    assert.deepEqual(
+      selectStyleExamples(profile, query),
+      [profile.samples[1]],
+      query,
+    );
+  }
+  for (const query of [
+    "I'm completely overwhelmed",
+    "I feel burned out",
+    "feeling burnt out lately",
+    "work is crushing me",
+    "I'm under pressure",
+    "overwhelmed today",
+  ]) {
+    assert.equal(classifyPlayStyleScene(query), "low_mood", query);
+    assert.deepEqual(
+      selectStyleExamples(profile, query),
+      [profile.samples[2]],
+      query,
+    );
+  }
+});
+
+test("overload matching excludes positive, negated and factual uses", () => {
+  const profile = distillPlayStyle(
+    persona(
+      "朋友：今天有点烦\n我：说来听听\n朋友：feeling down today\n我：want to talk",
+    ),
+  );
+  for (const query of [
+    "工作没有压得我喘不过气",
+    "脑子不会转不动了",
+    "最近工作顺利 心情很好",
+    "脑子转不动是什么原因",
+    "工作压得喘不过气怎么翻译",
+    "压力传感器的原理是什么",
+    "I'm not overwhelmed",
+    "I don't feel burned out",
+    "I am no longer feeling burnt out",
+    "I'm overwhelmed with joy",
+    "feeling overwhelmed by gratitude",
+    "what does burned out mean?",
+    "what causes people to feel overwhelmed?",
+    "definition of feeling burned out",
+  ]) {
+    assert.notEqual(classifyPlayStyleScene(query), "low_mood", query);
+    assert.deepEqual(selectStyleExamples(profile, query), [], query);
+  }
 });
 
 test("retrieval recalculates scenes from original text in compatible stored profiles", () => {

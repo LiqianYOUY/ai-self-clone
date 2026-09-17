@@ -431,6 +431,46 @@ test("style violations are rewritten once without adding the rejected text to co
   }
 });
 
+test("speaker ownership and a later correction survive retries without becoming persona facts", async () => {
+  for (const [friendDay, selfDay] of [
+    ["周三", "周二"],
+    ["周二", "周三"],
+  ]) {
+    const messages = [
+      { speaker: "FRIEND" as const, text: `我${friendDay}休息` },
+      { speaker: "SOURCE" as const, text: `我也是${friendDay}` },
+      { speaker: "FRIEND" as const, text: "你再确认一下自己的安排" },
+      { speaker: "SOURCE" as const, text: `刚才记错了 我${selfDay}休息` },
+      {
+        speaker: "FRIEND" as const,
+        text: `所以你是${selfDay}，我是${friendDay}，对吧`,
+      },
+    ];
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(
+        body.messages.slice(1),
+        messages.map((message) => ({
+          role: message.speaker === "FRIEND" ? "user" : "assistant",
+          content: message.text,
+        })),
+      );
+      const system = body.messages[0].content;
+      assert.match(system, /本人.*assistant.*朋友.*user/u);
+      assert.match(system, /本人之前的话.*(?:说错|更正)/u);
+      for (const message of messages) assert(!system.includes(message.text));
+      // This mock exercises request boundaries, not the model's understanding.
+      return completion({
+        content: calls === 1 ? "解释".repeat(30) : "对 各自那天",
+      });
+    };
+    await generatePlayReply({ persona: context.persona, messages });
+    assert.equal(calls, 2);
+  }
+});
+
 test("repeated style failures never leak an invalid reply or get unlimited retries", async () => {
   let calls = 0;
   globalThis.fetch = async () => {
@@ -582,6 +622,41 @@ test("local context grows for a long conversation while small chats avoid the ma
   assert(sizes[1] > sizes[0]);
   assert(sizes[2] >= sizes[1]);
   assert(sizes.every((size) => size <= 32768));
+});
+
+test("clarification learns literal repair wording without importing an unrelated reason from history", async () => {
+  const persona = {
+    ...context.persona,
+    examplesText:
+      "朋友：没听懂你那句话\n我：我刚才没表达清楚，是说昨晚没睡好\n朋友：什么意思\n我：是我说得太绕了，我想说的就是有点困\n朋友：解释一下\n我：今天太忙了，所以没说清楚",
+  };
+  const messages = [
+    { speaker: "FRIEND" as const, text: "嗨" },
+    { speaker: "SOURCE" as const, text: "我刚从月球回来" },
+    { speaker: "FRIEND" as const, text: "你刚才那句什么意思" },
+  ];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    const system = body.messages[0].content;
+    assert.deepEqual(body.messages.slice(1), [
+      { role: "user", content: "嗨" },
+      { role: "assistant", content: "我刚从月球回来" },
+      { role: "user", content: "你刚才那句什么意思" },
+    ]);
+    assert(!system.includes("我刚从月球回来"));
+    assert(system.includes("我刚才没表达清楚"));
+    assert(system.includes("是我说得太绕了"));
+    for (const unrelated of ["昨晚没睡好", "有点困", "今天太忙了"])
+      assert(!system.includes(unrelated));
+    return completion({ content: "刚才是我说岔了" });
+  };
+  assert.equal(
+    await generatePlayReply({
+      persona,
+      messages,
+    }),
+    "刚才是我说岔了",
+  );
 });
 
 test("ambiguous target examples fail before inference rather than imitating the other speaker", async () => {
