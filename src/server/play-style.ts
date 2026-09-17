@@ -28,6 +28,7 @@ export type PlayStyleScene =
   | "greeting"
   | "clarification"
   | "skepticism"
+  | "low_mood"
   | "invitation"
   | "thanks"
   | "apology"
@@ -40,6 +41,7 @@ const SCENES = new Set<PlayStyleScene>([
   "greeting",
   "clarification",
   "skepticism",
+  "low_mood",
   "invitation",
   "thanks",
   "apology",
@@ -106,23 +108,36 @@ function labelKey(label: string): string {
     .toLocaleLowerCase("en");
 }
 
-function scene(text: string): PlayStyleScene {
+/** Shared conversational intent for retrieval and the reply's immediate goal. */
+export function classifyPlayStyleScene(text: string): PlayStyleScene {
+  const value = text.trim();
   if (
-    /一眼\s*ai|机器人|像\s*ai|是\s*ai|人工智能|露馅|装的|\bbot\b/iu.test(text)
+    /一眼\s*ai\b|(?:你|这(?:句|话|回复|语气))[^。！？\n]{0,18}(?:机器人|像\s*ai\b|是\s*ai\b|人工智能|客套|官方|敷衍|板正|客服|端着)|^(?:露馅|装的)|\b(?:are you (?:an? )?(?:ai|bot)|you sound (?:like|robotic|so formal)|that sounds (?:robotic|so formal)|(?:this|that) (?:reply|message) sounds like)\b/iu.test(
+      value,
+    )
   )
     return "skepticism";
   if (
-    /啥|什么意思|什么意|没听懂|没懂|没明白|说清楚|解释|听不懂|哪句|为啥|为什么|\b(?:what do you mean|explain|why)\b/iu.test(
-      text,
+    /^(?:啥|什么|啊)[？?！!。\s]*$|[？?]\s*(?:啥|什么)[？?\s]*$|什么意思|啥意思|(?:没|不)(?:听|看)?(?:懂|明白)|说清楚|你说啥|哪句|(?:再|重新)(?:说|解释)|解释(?:一下)?(?:你|刚|上|这|那)|^(?:请)?解释(?:一下)?[？?\s]*$|(?:为什么|为啥).{0,12}(?:这么说|那样说|这样说)|\b(?:what do you mean|(?:do not|don't|did not|didn't) (?:get|understand)|say that again|which part|why did you say|explain (?:that|what you))\b/iu.test(
+      value,
     )
   )
     return "clarification";
   if (
-    /^(?:哈[喽啰罗]|你[好]|您好|嗨|嘿|早[呀啊安]?|晚[上]好|在吗|hello\b|hi\b|hey\b|good morning\b)/iu.test(
-      text,
+    /^(?:哈[喽啰罗]|你好|您好|嗨|嘿|早安|早上好|晚上好|早[呀啊]?\s*$|(?:哟|喂)?[，,！!\s]*(?:在吗|在不|在不在)|好久(?:不见|没(?:聊|唠)(?:天)?了)|hello\b|hi\b|hey\b|good morning\b|long time no see\b|(?:yo[,!\s]*)?(?:are you )?(?:there|around)\b)/iu.test(
+      value,
     )
   )
     return "greeting";
+  if (
+    !/不(?:太|怎么|是|觉得|会)?累|不(?:太|怎么|是|觉得)?烦|不难过|没有不开心|\b(?:not|never) (?:tired|sad|upset|down|exhausted)\b/iu.test(
+      value,
+    ) &&
+    /(?:有点|有些|挺|很|太|好|特别|真(?:的)?)(?:累|烦|难过|沮丧|委屈|郁闷|失落)|(?:我|今天|最近).{0,8}(?:累了|烦死|难过|不开心|心情不好|压力大|提不起劲)|^(?:累了|烦死了|难过|不开心|心情不好|提不起劲|想静静)[。！!\s]*$|\b(?:(?:i(?:'m| am)?|feeling|feel|so|really|very|a bit) (?:tired|sad|upset|down|exhausted|stressed)|having a (?:rough|bad) day)\b/iu.test(
+      value,
+    )
+  )
+    return "low_mood";
   if (
     /一起|约[吗个一下呗]?|出来|去[不]?去|吃饭|吃[个]?饭|喝[杯点]?|看[个]?电影|打[把]?游戏|\b(?:join|hang out|dinner|lunch)\b/iu.test(
       text,
@@ -140,7 +155,11 @@ function scene(text: string): PlayStyleScene {
   )
     return "agreement";
   if (/^(?:哈{2,}|笑死|乐|lol\b|lmao\b)/iu.test(text)) return "laughter";
-  if (/[?？]|[吗呢么]$|\b(?:how|when|where|what|who)\b/iu.test(text))
+  if (
+    /[?？]|[吗呢么]$|为什么|为啥|怎么|怎样|哪[里个些]|几[点个岁]|多少|\b(?:how|when|where|what|who|why)\b/iu.test(
+      text,
+    )
+  )
     return "question";
   return "other";
 }
@@ -297,7 +316,7 @@ function parseSamples(persona: PlayPersonaInput): {
           id: `s${samples.length + 1}`,
           text,
           ...(pendingFriend ? { prompt: pendingFriend } : {}),
-          scene: scene(pendingFriend ?? text),
+          scene: classifyPlayStyleScene(pendingFriend ?? text),
         });
       } else warnings.add("ignored_lines");
       // Consecutive host messages remain distinct; only the first is a direct reply.
@@ -568,6 +587,39 @@ function tokens(text: string): Set<string> {
           "with",
           "what",
           "how",
+          "where",
+          "when",
+          "why",
+          "who",
+          "which",
+          "is",
+          "it",
+          "my",
+          "am",
+          "be",
+          "do",
+          "as",
+          "on",
+          "in",
+          "of",
+          "to",
+          "at",
+          "we",
+          "me",
+          "so",
+          "no",
+          "an",
+          "today",
+          "really",
+          "very",
+          "feeling",
+          "feel",
+          "just",
+          "was",
+          "did",
+          "not",
+          "can",
+          "could",
         ]).has(word)
       )
         result.add(word);
@@ -575,7 +627,7 @@ function tokens(text: string): Set<string> {
       for (let i = 0; i < word.length - 1; i++) {
         const pair = word.slice(i, i + 2);
         if (
-          !/^(?:我的|你的|我们|你们|这个|那个|就是|什么|怎么|时候|一个|可以|不是|我在|你在)$/u.test(
+          !/^(?:我的|你的|我们|你们|这个|那个|就是|什么|为什|怎么|时候|么时|哪里|在哪|多少|何时|是否|怎样|咋样|一个|可以|不是|我在|你在|我很|你很|我也|你也|有点|有些|今天|明天|昨天|最近|好久|一下|了吧)$/u.test(
             pair,
           )
         )
@@ -585,6 +637,27 @@ function tokens(text: string): Set<string> {
   }
   return result;
 }
+
+function textLanguage(text: string): "zh" | "en" | undefined {
+  // Common acknowledgements may be borrowed in either language. For real
+  // sentences, require the query and both sides of a pair to use compatible text.
+  if (
+    /^(?:ok(?:ay)?|kk|lol|lmao|(?:ha){2,}|哈+|嗯+)[\s.!！?？~～]*$/iu.test(
+      text.trim(),
+    )
+  )
+    return undefined;
+  if (/\p{Script=Han}/u.test(text)) return "zh";
+  if (/[a-z]/iu.test(text)) return "en";
+  return undefined;
+}
+
+const FOCUSED_SCENES = new Set<PlayStyleScene>([
+  "greeting",
+  "clarification",
+  "skepticism",
+  "low_mood",
+]);
 
 /** Relevant authentic examples, bounded independently of corpus size. */
 export function selectStyleExamples(
@@ -596,23 +669,41 @@ export function selectStyleExamples(
     0,
     Math.min(6, Number.isFinite(limit) ? Math.floor(limit) : 4),
   );
-  const currentScene = scene(currentText);
+  const currentScene = classifyPlayStyleScene(currentText);
+  const queryLanguage = textLanguage(currentText);
   const queryTokens = tokens(currentText);
   const scored = profile.samples
     .map((sample, index) => {
+      // Stored v1 profiles retain valid original evidence. Reclassify that
+      // evidence at retrieval time so existing profiles gain the improved matching.
+      const candidateScene = classifyPlayStyleScene(
+        sample.prompt ?? sample.text,
+      );
+      const compatibleLanguage = [sample.prompt, sample.text].every((text) => {
+        const language = text === undefined ? undefined : textLanguage(text);
+        return !queryLanguage || !language || queryLanguage === language;
+      });
       const candidateTokens = tokens(sample.prompt ?? sample.text);
       const shared = [...queryTokens].filter((token) =>
         candidateTokens.has(token),
       ).length;
       const sameScene =
-        currentScene !== "other" && sample.scene === currentScene;
+        currentScene !== "other" &&
+        currentScene !== "question" &&
+        candidateScene === currentScene;
+      const compatibleIntent =
+        (!FOCUSED_SCENES.has(currentScene) &&
+          !FOCUSED_SCENES.has(candidateScene)) ||
+        sameScene;
       return {
         sample,
         index,
         score:
-          (sameScene ? 10 : 0) +
-          Math.min(8, shared * 2) +
-          (sameScene || shared ? (sample.prompt ? 2 : 0) : 0),
+          compatibleLanguage && compatibleIntent
+            ? (sameScene ? 10 : 0) +
+              Math.min(8, shared * 2) +
+              (sameScene || shared ? (sample.prompt ? 2 : 0) : 0)
+            : 0,
       };
     })
     .filter(

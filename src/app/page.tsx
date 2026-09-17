@@ -16,7 +16,6 @@ const copy = {
     description:
       "和熟悉的朋友聊五轮，判断回复来自本人还是 AI。本实验仅研究人与 AI、真人的互动。",
     start: "开始实验",
-    caption: "昵称参与 · 朋友无需账号",
     steps: "如何参与",
     flow: [
       [
@@ -44,7 +43,6 @@ const copy = {
     description:
       "Chat with someone you know for five rounds, then guess who replied. This study explores interaction with AI and real people.",
     start: "Start the study",
-    caption: "Use a nickname · Guests need no account",
     steps: "How to take part",
     flow: [
       [
@@ -122,7 +120,6 @@ export default function Page() {
                 {c.start}
                 <ArrowRight size={19} aria-hidden="true" />
               </a>
-              <p className="home-caption">{c.caption}</p>
             </div>
             <ol className="home-flow" aria-label={c.steps}>
               {c.flow.map(([title, body], index) => (

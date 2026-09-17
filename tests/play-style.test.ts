@@ -277,6 +277,141 @@ test("retrieval deduplicates speech and favors paired examples over standalone s
   assert.equal(selected[2].prompt, undefined);
 });
 
+test("short conversational paraphrases retrieve authentic reply pairs without exact wording", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：哟在不\n我：在 咋啦",
+        "朋友：好久没唠了\n我：是啊 最近咋样",
+        "朋友：你说跑偏是啥意思\n我：就我刚才说岔了",
+        "朋友：这句像机器人发的\n我：笑死 有那么夸张吗",
+        "朋友：今天有点烦\n我：咋啦 说来听听",
+        "朋友：明天一起买菜不\n我：行啊 几点",
+        "朋友：没看懂你上一句\n我：我没说清 就是太困了",
+        "朋友：你这话太客套了吧\n我：行行行 我正常点",
+        "朋友：有点甜的饮料是哪瓶\n我：左边那瓶",
+      ].join("\n\n"),
+    ),
+  );
+  for (const [input, ids] of [
+    ["哈喽哈喽", ["s1", "s2"]],
+    ["一眼ai", ["s4", "s8"]],
+    ["听多了？啥", ["s3", "s7"]],
+    ["有点累 不想出门", ["s5"]],
+  ] as const) {
+    const selected = selectStyleExamples(profile, input);
+    assert.deepEqual(
+      selected.map(({ id }) => id),
+      ids,
+      input,
+    );
+    for (const sample of selected)
+      assert.deepEqual(
+        sample,
+        profile.samples.find(({ id }) => id === sample.id),
+      );
+  }
+  assert.deepEqual(selectStyleExamples(profile, "天气预报说明天降温"), []);
+  assert.deepEqual(selectStyleExamples(profile, "我很开心"), []);
+  assert.deepEqual(selectStyleExamples(profile, "我不太累"), []);
+});
+
+test("retrieval recalculates scenes from original text in compatible stored profiles", () => {
+  const input = persona(
+    "朋友：哟在不\n我：在呢\n朋友：今天有点烦\n我：说来听听",
+  );
+  const original = distillPlayStyle(input);
+  const stored = {
+    ...original,
+    samples: original.samples.map((sample) => ({
+      ...sample,
+      scene: "other" as const,
+    })),
+  };
+  const profile = resolvePlayStyle(input, stored);
+  const before = JSON.stringify(profile);
+  assert.equal(profile.version, original.version);
+  assert.deepEqual(
+    selectStyleExamples(profile, "你好").map(({ id }) => id),
+    ["s1"],
+  );
+  assert.deepEqual(
+    selectStyleExamples(profile, "最近压力大").map(({ id }) => id),
+    ["s2"],
+  );
+  assert.equal(
+    JSON.stringify(profile),
+    before,
+    "retrieval must not mutate stored evidence",
+  );
+});
+
+test("conversational clarification and teasing do not match unrelated factual questions", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：听不懂你刚才说的\n我：我换个说法",
+        "朋友：你说话像机器人\n我：有这么明显吗",
+        "朋友：你家在哪里\n我：火星基地",
+        "朋友：为什么天空是蓝色的\n我：光的散射吧",
+      ].join("\n"),
+    ),
+  );
+  for (const query of [
+    "今晚吃啥",
+    "这个机器人多少钱",
+    "哪里能买到书",
+    "为什么海水是咸的",
+  ])
+    assert.deepEqual(selectStyleExamples(profile, query), [], query);
+  assert.deepEqual(
+    selectStyleExamples(profile, "你刚才那句什么意思").map(({ id }) => id),
+    ["s1"],
+  );
+  assert.deepEqual(
+    selectStyleExamples(profile, "你这回复也太官方了").map(({ id }) => id),
+    ["s2"],
+  );
+});
+
+test("scene matching stays within the language of the current conversation", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：好久没聊了\n我：在呢",
+        "朋友：你这话太客套了\n我：我正常点",
+        "朋友：我今天很难过\n我：愿意说说吗",
+        "朋友：yo are you around?\n我：yeah what's up",
+        "朋友：you sound so formal\n我：haha fair point",
+        "朋友：I don't get what you said\n我：let me put that differently",
+        "朋友：feeling down today\n我：want to talk about it",
+        "朋友：hello\n我：这句只有中文",
+      ].join("\n"),
+    ),
+  );
+  for (const [query, ids] of [
+    ["哈喽", ["s1"]],
+    ["hi", ["s4"]],
+    ["are you a bot?", ["s5"]],
+    ["what do you mean?", ["s6"]],
+    ["I'm stressed", ["s7"]],
+    ["有点累", ["s3"]],
+  ] as const)
+    assert.deepEqual(
+      selectStyleExamples(profile, query).map(({ id }) => id),
+      ids,
+      query,
+    );
+  assert.deepEqual(selectStyleExamples(profile, "I'm not tired"), []);
+  assert.deepEqual(
+    selectStyleExamples(
+      distillPlayStyle(persona("朋友：你好\n我：来了")),
+      "hello",
+    ),
+    [],
+  );
+});
+
 test("versioned source hashes and profile resolution invalidate edits and corrupt caches", () => {
   const input = persona("朋友：嗨\n我：来了\n朋友：嗨\n我：来了");
   const profile = distillPlayStyle(input);

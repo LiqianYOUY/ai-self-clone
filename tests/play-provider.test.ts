@@ -215,7 +215,7 @@ test("without environment settings the provider defaults to native local Ollama 
     assert.equal(body.model, "qwen3.5:4b");
     assert.equal(body.think, false);
     assert.equal(body.stream, false);
-    assert.equal(body.options.num_ctx, 32768);
+    assert.equal(body.options.num_ctx, 4096);
     assert.equal(body.options.num_predict, 512);
     return Response.json({
       model: "qwen3.5:4b",
@@ -466,6 +466,122 @@ test("longer or expressive speaker evidence is respected instead of enforcing on
   };
   assert((await generatePlayReply(expressive)).endsWith("😊"));
   assert.equal(calls, 1);
+});
+
+const groundedPersona = {
+  ...context.persona,
+  examplesText:
+    "朋友：嗨\n我：在啊 咋啦\n朋友：今天有点累\n我：那就先歇会儿呗\n朋友：这话像机器人\n我：笑死 有那么夸张吗\n朋友：没懂你这句话\n我：我没说清楚 重新说",
+};
+
+test("obvious echoes and empty acknowledgements get one content-focused retry", async () => {
+  for (const [input, rejected, accepted] of [
+    ["有点累 不想出门", "好。", "那就先歇会儿呗"],
+    ["一眼ai", "哈哈，一眼 Ai", "笑死 有那么夸张吗"],
+    ["没看懂你这句话", "没看懂你这句话", "我没说清楚 重新说"],
+  ]) {
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+      calls++;
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.messages.at(-1).content, input);
+      if (calls === 2) assert.match(body.messages[0].content, /重新生成要求/);
+      return completion({ content: calls === 1 ? rejected : accepted });
+    };
+    assert.equal(
+      await generatePlayReply({
+        persona: groundedPersona,
+        messages: [{ speaker: "FRIEND", text: input }],
+      }),
+      accepted,
+    );
+    assert.equal(calls, 2);
+  }
+});
+
+test("confirmations and source-supported short responses are not padded into longer replies", async () => {
+  for (const [input, reply] of [
+    ["下次九点见", "下次九点见"],
+    ["没看懂，是这个意思吗", "对"],
+    ["你有点累吗", "嗯"],
+    ["哈喽哈喽", "哈喽哈喽"],
+    ["一眼ai", "笑死"],
+  ]) {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return completion({ content: reply });
+    };
+    assert.equal(
+      await generatePlayReply({
+        persona: groundedPersona,
+        messages: [{ speaker: "FRIEND", text: input }],
+      }),
+      reply,
+    );
+    assert.equal(calls, 1);
+  }
+  globalThis.fetch = async () => completion({ content: "嗯" });
+  assert.equal(
+    await generatePlayReply({
+      persona: {
+        ...groundedPersona,
+        examplesText:
+          groundedPersona.examplesText + "\n朋友：今天有点烦\n我：嗯",
+      },
+      messages: [{ speaker: "FRIEND", text: "今天有点累" }],
+    }),
+    "嗯",
+  );
+});
+
+test("a new topic does not retrieve old conversation facts and representative voice follows the current language", async () => {
+  const persona = {
+    ...groundedPersona,
+    examplesText:
+      "朋友：一起吃饭吗\n我：好呀 海边那家面馆\nfriend: hey\n我：hey what's up",
+  };
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.match(body.messages[0].content, /相关历史接话：\[\]/);
+    assert(!body.messages[0].content.includes("海边那家面馆"));
+    return completion({ content: "not sure yet" });
+  };
+  await generatePlayReply({
+    persona,
+    messages: [
+      { speaker: "FRIEND", text: "一起吃饭吗" },
+      { speaker: "SOURCE", text: "再看看" },
+      { speaker: "FRIEND", text: "what book are you reading?" },
+    ],
+  });
+});
+
+test("local context grows for a long conversation while small chats avoid the maximum allocation", async () => {
+  process.env.PLAY_MODEL_PROVIDER = "ollama";
+  process.env.PLAY_MODEL_BASE_URL = "http://127.0.0.1:11434";
+  const sizes: number[] = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    sizes.push(body.options.num_ctx);
+    assert.equal(body.think, false);
+    assert(body.messages.at(-1).content.endsWith("吃饭吗"));
+    return Response.json({
+      message: { content: "行啊" },
+      done: true,
+      done_reason: "stop",
+    });
+  };
+  for (const length of [0, 2000, 3900]) {
+    await generatePlayReply({
+      persona: { ...context.persona, bio: "资".repeat(length) },
+      messages: [{ speaker: "FRIEND", text: "吃饭吗" }],
+    });
+  }
+  assert.equal(sizes[0], 4096);
+  assert(sizes[1] > sizes[0]);
+  assert(sizes[2] >= sizes[1]);
+  assert(sizes.every((size) => size <= 32768));
 });
 
 test("ambiguous target examples fail before inference rather than imitating the other speaker", async () => {

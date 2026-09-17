@@ -18,7 +18,6 @@ const translations = {
     description:
       "和熟悉的朋友聊五轮，判断回复来自本人还是 AI。本实验仅研究人与 AI、真人的互动。",
     start: "开始实验",
-    caption: "浏览器直接参与 · 无需下载",
     steps: "如何参与",
     stepOne: "留下表达习惯",
     stepOneBody: "使用昵称或随机用户名，提供几段不含身份信息的对话示例。",
@@ -49,7 +48,6 @@ const translations = {
     description:
       "Chat with someone you know for five rounds, then guess who replied. This study explores interaction with AI and real people.",
     start: "Start the study",
-    caption: "Join in your browser · No download needed",
     steps: "How to take part",
     stepOne: "Share your speaking style",
     stepOneBody:

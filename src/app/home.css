@@ -151,12 +151,6 @@
 .self-home .home-primary:hover {
   background: #183b30;
 }
-.self-home .home-caption {
-  color: var(--home-muted);
-  margin: 13px 0 0;
-  font-size: 12px;
-  line-height: 1.6;
-}
 .self-home .home-flow {
   list-style: none;
   margin: 0;
@@ -300,10 +294,6 @@
   }
   .self-home .home-primary {
     width: 100%;
-  }
-  .self-home .home-caption {
-    text-align: center;
-    font-size: 11px;
   }
   .self-home .home-flow li {
     padding: 18px 0;

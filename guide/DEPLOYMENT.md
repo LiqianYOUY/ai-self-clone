@@ -54,7 +54,16 @@ journalctl -u ai-self-clone -n 50 --no-pager
 sudo systemctl restart ai-self-clone
 ```
 
-更新时先停止自己的服务，更新代码和依赖、测试并构建，再重启。`npm run clean` 只在服务和测试停止时运行；它会删除生产构建，需要重新构建后启动。清理不删除 `.local/postgres`、数据库密码、模型或 Tailscale 状态；应用数据删除需使用专门的删除流程。
+更新按以下顺序执行：
+
+1. 核对没有 `WAITING`、`ACTIVE` 或 `GUESSING` 房间，再安排停止应用。不要中断正在参与的对局。
+2. 在 Mac 按下方“代码备份”说明归档树莓派当前部署的 Git 提交，确认归档成功后再更新。
+3. 在树莓派执行 `sudo systemctl stop ai-self-clone`，只更新版本化代码。保留 `.env`、原数据库与口令、模型、项目运行时和隧道状态；不要覆盖或清空 `.local/`，也不要重置独立隧道。树莓派不保留旧源码副本或旧构建回滚目录。
+4. 依赖锁有变化时先执行 `npm ci`，然后依次执行 `npm run db:generate`、`npm run test:isolated`、`npm run build`，通过后执行 `sudo systemctl start ai-self-clone`。不从 Mac 复制 `node_modules`。检查服务状态、HTTPS 页面及游戏流程后，恢复接待。
+
+`npm run clean` 只在服务和测试停止时运行；它会删除生产构建，需要重新构建后启动。清理不删除 `.local/postgres`、数据库密码、模型或 Tailscale 状态；应用数据删除需使用专门的删除流程。
+
+更新失败时，从 Mac 的代码归档重新发送既有代码到树莓派，在原环境中安装依赖、重新构建并启动；不依赖树莓派上的旧目录。先确认旧代码兼容当前数据库结构，必要时修复代码后重建。此恢复流程绝不恢复或覆盖参与数据库，也不回滚数据库迁移，避免重新引入已删除的参与资料。
 
 风格提炼更新包含 migration `202609160002_play_style_distillation`，仅新增示例称呼与风格档案字段。树莓派停止 `ai-self-clone` 时，其自有 PostgreSQL 也会停止；此时先更新代码、运行隔离测试并构建 `.cache/next`，再启动服务，由 `start-local` 启动原数据库并执行迁移。只有数据库已运行且配置了 `DATABASE_URL` 时，才单独运行 `npm run db:migrate`。旧资料在读取时兼容提炼，重新保存后持久化，建议主持人核对识别对象并试聊。GitHub 代码推送本身不会更新正在运行的树莓派服务。
 
@@ -75,7 +84,23 @@ journalctl -u ai-self-quick-tunnel -n 40 --no-pager
 
 中英文页面使用相同的数据政策：昵称或随机用户名参与，无需真实姓名、邮箱或手机号；资料仅用于本实验及相关分析，实验与分析完成后由项目负责人删除，个人信息不公开。主持人可删除自助注册的游戏账号及全部关联资料，朋友可删除当前整局数据，包括双方消息；两种删除均不可恢复。仅结束对局、退出登录或清理构建缓存不会删除参与数据。删除回归已通过，Mac 与 Pi 的完整自动化套件均为 150/150。
 
-前后端备份仅保存代码。参与数据、数据库、原始输入、`.env`、密钥和 `.local/tailscale/` 身份状态不进入公开仓库或代码备份。
+### 代码备份
+
+旧代码备份只保存在 Mac 项目的 `.local/code-backups/`，该目录已被 `.local/` 忽略规则覆盖，不提交 GitHub。树莓派只保留当前运行所需的源码和构建，不保留旧源码、旧构建或本地回滚副本。
+
+在 Mac 项目根目录执行；先将 `deployed_commit` 替换为已核实的树莓派当前部署提交号，而非尚未部署的 Mac 最新提交：
+
+```sh
+deployed_commit="填写当前树莓派部署对应的Git提交号"
+git cat-file -e "${deployed_commit}^{commit}"
+mkdir -p .local/code-backups
+git archive --format=tar.gz \
+  --output=".local/code-backups/ai-self-clone-${deployed_commit}.tar.gz" \
+  "$deployed_commit"
+tar -tzf ".local/code-backups/ai-self-clone-${deployed_commit}.tar.gz" >/dev/null
+```
+
+任一步失败都先停止更新并处理原因。`git archive` 仅归档指定提交中的版本化代码，不打包整个工作目录。参与数据、数据库、原始输入、`.env`、密钥、模型和 `.local/tailscale/` 身份状态不进入公开仓库或代码备份；代码恢复始终使用树莓派现有的参与数据库。
 
 ### 实验及分析结束后的集中删除
 
@@ -116,6 +141,6 @@ Compose 默认只绑定宿主机回环地址，异地部署还需 HTTPS 代理�
 
 - `docs/` 作为 Pages 发布目录；源代码仓库保持独立 public。
 - `docs/index.html` 直接提供游戏和完整隐私链接，不依赖脚本切换“待上线”状态；更换游戏地址时更新 HTML 中的对应链接，脚本会沿用主入口并附加语言参数。
-- 页面引用的 JS/CSS 带内容版本参数。修改静态资源后，同步更新 `index.html` 中的 `?v=` 值，避免 GitHub Pages 的旧缓存延迟显示新内容。原 `#availability` 链接保留为主按钮下的简短说明锚点。
+- 页面引用的 JS/CSS 带内容版本参数。修改静态资源后，同步更新 `index.html` 中的 `?v=` 值，避免 GitHub Pages 的旧缓存延迟显示新内容。首页按钮下的副文案已移除。
 - `deploy/github-actions-ci.yml` 是 CI 模板。当前发布凭据缺少 `workflow` 权限，未启用自动工作流；本地完整验收不依赖它。
 - `.env`、`.local/`、密钥、数据库和模型不会上传。原始研究输入统一保存在被忽略的 `.local/research-inputs/`。
