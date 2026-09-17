@@ -29,6 +29,7 @@ export type PlayStyleScene =
   | "clarification"
   | "skepticism"
   | "low_mood"
+  | "recollection"
   | "invitation"
   | "thanks"
   | "apology"
@@ -42,6 +43,7 @@ const SCENES = new Set<PlayStyleScene>([
   "clarification",
   "skepticism",
   "low_mood",
+  "recollection",
   "invitation",
   "thanks",
   "apology",
@@ -133,9 +135,60 @@ function hasOverloadSignal(text: string): boolean {
   );
 }
 
+function isConversationalCorrection(text: string): boolean {
+  // Contrast the speakers' utterances, rather than classifying by the topic
+  // inside them (a date, meal, place, quantity, and so on).
+  if (
+    /^我(?:想|能|可以)?问(?:你)?(?:一下|下|个问题)?[，,\s]*(?:你)?(?:怎么|怎样|如何|为什么|为啥|哪|什么)/u.test(
+      text,
+    )
+  )
+    return false;
+  return (
+    /(?:我|咱们)(?:刚才|刚刚|方才|之前|先前|刚|原本)?(?:问|说|提|讲)[^。！？\n]{0,70}(?:你|您)(?:却|反而|怎么|咋|又|还|说|答|回)|你(?:刚才|刚刚|之前|前面|先前)?(?:说|讲|答|回)[^。！？\n]{1,60}(?:现在|这次|后来)[^。！？\n]{0,12}(?:又|却|怎么|咋|变|成)|你[^。！？\n]{0,8}把[^。！？\n]{1,40}(?:说成|看成|听成|记成|弄成|当成)|(?:我问|我说|我指)(?:的)?是[^。！？\n]{1,50}(?:不是|而不是)|不是[^。！？\n]{1,50}(?:我问|我说|我指)(?:的)?是/u.test(
+      text,
+    ) ||
+    /\bi (?:asked|said|meant|was asking|was talking about)\b[^.!?\n]{0,100}\b(?:but you|you (?:said|answered|replied)|why (?:did|are|do) you|not|rather than)\b|\byou (?:said|told me|answered)\b[^.!?\n]{1,80}\b(?:but now|now you|why (?:are|did) you)\b/iu.test(
+      text,
+    )
+  );
+}
+
+function isRecollection(text: string): boolean {
+  // Remembering an earlier event and being told to remember a future action
+  // are different speech acts, even when both mention doing something together.
+  if (
+    /翻译|定义|怎么说|什么意思|啥意思|(?:怎么|如何|怎样)(?:才能|能|才会).{0,10}记得|(?:人|大脑|人们)为什么.{0,10}记得|\b(?:definition|translate|meaning|what does|(?:how|why) (?:do|does|can) (?:we|people|humans|the brain))\b/iu.test(
+      text,
+    )
+  )
+    return false;
+  const question =
+    /[?？]|[吗么不][。！!\s]*$|\b(?:do|did|can|could|would) you\b/iu.test(text);
+  if (
+    !question &&
+    /记得(?:要|得|先|再|别|不要|明天|后天|下周|下个|待会|等会|到时候)|别忘(?:了)?(?:要|明天|后天|下周|待会|等会)|(?:明天|后天|下周|待会|等会|到时候)[^。！？\n]{0,16}(?:记得|别忘)|\bremember\s+to\b/iu.test(
+      text,
+    )
+  )
+    return false;
+  return /(?:还)?记不记得|(?:还)?记得|想(?:不想)?得起|有没有印象|还有印象|有印象|\b(?:remember|recall)\b/iu.test(
+    text,
+  );
+}
+
+function isCasualCheckIn(text: string): boolean {
+  // Whole-message check-ins can use the greeting examples. A question about a
+  // particular task or object must retain its specific conversational purpose.
+  return /^(?:(?:喂|哟|嗨|嘿)[，,!！\s]*)?(?:你)?(?:现在)?(?:(?:在|正在)(?:忙啥|忙什么|干啥|干嘛|做什么)|忙啥|忙什么|干嘛呢|干啥呢|做什么呢)[呢呀啊？?。！!\s]*$|^(?:(?:hey|hi|yo)[,!\s]+)?(?:what(?:'s| is) up|what are you (?:up to|doing)(?: right now)?)[?!.\s]*$/iu.test(
+    text,
+  );
+}
+
 /** Shared conversational intent for retrieval and the reply's immediate goal. */
 export function classifyPlayStyleScene(text: string): PlayStyleScene {
   const value = text.trim();
+  if (isConversationalCorrection(value)) return "clarification";
   if (
     /一眼\s*ai\b|(?:你|这(?:句|话|回复|语气))[^。！？\n]{0,18}(?:机器人|像\s*ai\b|是\s*ai\b|人工智能|客套|官方|敷衍|板正|客服|端着)|^(?:露馅|装的)|\b(?:are you (?:an? )?(?:ai|bot)|you sound (?:like|robotic|so formal)|that sounds (?:robotic|so formal)|(?:this|that) (?:reply|message) sounds like)\b/iu.test(
       value,
@@ -148,6 +201,8 @@ export function classifyPlayStyleScene(text: string): PlayStyleScene {
     )
   )
     return "clarification";
+  if (isRecollection(value)) return "recollection";
+  if (isCasualCheckIn(value)) return "greeting";
   if (
     /^(?:哈[喽啰罗]|你好|您好|嗨|嘿|早安|早上好|晚上好|早[呀啊]?\s*$|(?:哟|喂)?[，,！!\s]*(?:在吗|在不|在不在)|好久(?:不见|没(?:聊|唠)(?:天)?了)|hello\b|hi\b|hey\b|good morning\b|long time no see\b|(?:yo[,!\s]*)?(?:are you )?(?:there|around)\b)/iu.test(
       value,
@@ -683,7 +738,25 @@ const FOCUSED_SCENES = new Set<PlayStyleScene>([
   "clarification",
   "skepticism",
   "low_mood",
+  "recollection",
 ]);
+
+function retrievalTokens(text: string, scene: PlayStyleScene): Set<string> {
+  if (scene !== "recollection") return tokens(text);
+  // Recall cues alone do not make two different personal events relevant.
+  // Require an actual topic overlap before exposing an old memory reply.
+  return tokens(
+    text
+      .replace(
+        /还记不记得|记不记得|还记得|记得|想不想得起来?|想得起来?|有没有印象|还有印象|有印象|一起|当时|以前|之前|从前|曾经|那时候|那会儿|(?:那|这|上)(?:一次|次|一回|回|件事|件)/gu,
+        " ",
+      )
+      .replace(
+        /\b(?:remember|recall|memories|memory|still|together|ago|last|time|used|then|back|ever|our)\b/giu,
+        " ",
+      ),
+  );
+}
 
 /** Relevant authentic examples, bounded independently of corpus size. */
 export function selectStyleExamples(
@@ -697,7 +770,7 @@ export function selectStyleExamples(
   );
   const currentScene = classifyPlayStyleScene(currentText);
   const queryLanguage = textLanguage(currentText);
-  const queryTokens = tokens(currentText);
+  const queryTokens = retrievalTokens(currentText, currentScene);
   const scored = profile.samples
     .map((sample, index) => {
       // Stored v1 profiles retain valid original evidence. Reclassify that
@@ -709,7 +782,10 @@ export function selectStyleExamples(
         const language = text === undefined ? undefined : textLanguage(text);
         return !queryLanguage || !language || queryLanguage === language;
       });
-      const candidateTokens = tokens(sample.prompt ?? sample.text);
+      const candidateTokens = retrievalTokens(
+        sample.prompt ?? sample.text,
+        candidateScene,
+      );
       const shared = [...queryTokens].filter((token) =>
         candidateTokens.has(token),
       ).length;
@@ -725,7 +801,9 @@ export function selectStyleExamples(
         sample,
         index,
         score:
-          compatibleLanguage && compatibleIntent
+          compatibleLanguage &&
+          compatibleIntent &&
+          (currentScene !== "recollection" || shared > 0)
             ? (sameScene ? 10 : 0) +
               Math.min(8, shared * 2) +
               (sameScene || shared ? (sample.prompt ? 2 : 0) : 0)

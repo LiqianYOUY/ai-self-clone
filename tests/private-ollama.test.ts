@@ -165,7 +165,7 @@ test("private replies use authenticated native Ollama controls and ordered roles
   };
   assert.equal(await generatePlayReply(context), "好，就老地方");
   assert.deepEqual(playGenerationPolicy(), {
-    promptVersion: "speaker-reply-v3",
+    promptVersion: "speaker-reply-v4",
     provider: "private-ollama",
     model,
   });

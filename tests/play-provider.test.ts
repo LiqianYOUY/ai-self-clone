@@ -796,6 +796,12 @@ test("frozen games reject model or distillation version drift before inference",
         promptVersion: "speaker-reply-v2",
       },
     },
+    {
+      generationPolicy: {
+        ...playGenerationPolicy(),
+        promptVersion: "speaker-reply-v3",
+      },
+    },
   ])
     await assert.rejects(
       generatePlayReply({ ...context, ...frozen }),

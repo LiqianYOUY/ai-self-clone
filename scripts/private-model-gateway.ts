@@ -338,7 +338,7 @@ const chatSchema = z
             content: z
               .string()
               .min(1)
-              .max(20000)
+              .max(65_536)
               .refine((text) => text.trim().length > 0),
           })
           .strict(),

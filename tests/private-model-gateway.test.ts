@@ -371,6 +371,34 @@ test("chat forwards original roles and content while fixing model, generation li
   assert.equal(calls, 1);
 });
 
+test("large single-message audits preserve full content through the 64Ki character boundary", async (t) => {
+  const accepted = ["界".repeat(30_000), "x".repeat(65_536)];
+  let calls = 0;
+  const app = await gateway(
+    t,
+    syntheticFetch(async (_input, init) => {
+      const forwarded = JSON.parse(String(init?.body));
+      assert.deepEqual(forwarded.messages, [
+        { role: "user", content: accepted[calls] },
+      ]);
+      assert.equal(forwarded.options.num_ctx, 32768);
+      assert(Buffer.byteLength(String(init?.body), "utf8") <= 128 * 1024);
+      calls++;
+      return Response.json(reply());
+    }),
+  );
+  for (const content of accepted) {
+    const response = await app.post({
+      ...body,
+      messages: [{ role: "user", content }],
+      options: { num_ctx: 32768 },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), reply());
+  }
+  assert.equal(calls, accepted.length);
+});
+
 test("invalid payloads and excessive actual bytes are rejected before readiness or inference", async (t) => {
   let calls = 0;
   const app = await gateway(t, async () => {
@@ -395,7 +423,7 @@ test("invalid payloads and excessive actual bytes are rejected before readiness 
     { ...body, messages: [{ role: "user", content: "x", images: ["image"] }] },
     { ...body, messages: [{ role: "tool", content: "x" }] },
     { ...body, messages: [{ role: "user", content: " " }] },
-    { ...body, messages: [{ role: "user", content: "x".repeat(20001) }] },
+    { ...body, messages: [{ role: "user", content: "x".repeat(65_537) }] },
     {
       ...body,
       messages: [
@@ -413,7 +441,12 @@ test("invalid payloads and excessive actual bytes are rejected before readiness 
   ])
     assert.equal((await app.post(value)).status, 400);
   assert.equal(
-    (await app.post({ ...body, padding: "界".repeat(50000) })).status,
+    (
+      await app.post({
+        ...body,
+        messages: [{ role: "user", content: "界".repeat(50_000) }],
+      })
+    ).status,
     413,
   );
   const oversizedChunked = await new Promise<number>((resolve, reject) => {

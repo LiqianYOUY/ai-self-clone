@@ -11,7 +11,7 @@ Mac 将配置存为项目 `.local/private-model/config.json`，文件必须属�
 ```json
 {
   "upstream": "http://127.0.0.1:11440",
-  "model": "qwen3.5:9b",
+  "model": "qwen3.5:27b",
   "modelDigest": "填写已核验模型的64位SHA256摘要",
   "token": "填写至少32字符的私有随机令牌",
   "port": 11441
@@ -23,7 +23,7 @@ Mac 将配置存为项目 `.local/private-model/config.json`，文件必须属�
 ```dotenv
 PLAY_MODEL_PROVIDER=private-ollama
 PLAY_MODEL_BASE_URL=http://127.0.0.1:11441
-PLAY_MODEL_NAME=qwen3.5:9b
+PLAY_MODEL_NAME=qwen3.5:27b
 PLAY_MODEL_API_KEY=填写Mac网关的私有随机令牌
 PLAY_MODEL_RESIDENT=1
 ```

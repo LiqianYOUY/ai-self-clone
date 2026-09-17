@@ -483,6 +483,167 @@ test("scene matching stays within the language of the current conversation", () 
   );
 });
 
+test("recalling an event never retrieves an invitation just because both mention doing things together", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：要不要一起逛书店\n我：行啊 几点",
+        "朋友：Want to join me for dinner?\n我：sure what time",
+      ].join("\n\n"),
+    ),
+  );
+  for (const query of [
+    "你还记得前年咱俩一起去露营的事吗",
+    "上回一起修自行车，你还有印象吗",
+    "记不记得我们之前一起排过队",
+    "Do you remember our walk together last spring?",
+    "Can you recall when we had lunch after the concert?",
+    "Remember that dinner we shared?",
+  ]) {
+    assert.equal(classifyPlayStyleScene(query), "recollection", query);
+    assert.deepEqual(selectStyleExamples(profile, query), [], query);
+  }
+});
+
+test("memory examples require a shared topic instead of generic recall cues", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：记不记得以前一起露营\n我：记得 我带了帐篷",
+        "朋友：还记得一起看展那次吗\n我：记得 门口下雨",
+        "朋友：Do you remember our camping trip?\n我：yeah I brought the tent",
+        "朋友：Remember that dinner together?\n我：yeah we ate outside",
+      ].join("\n\n"),
+    ),
+  );
+  for (const [query, ids] of [
+    ["你还记得露营那回吗", ["s1"]],
+    ["Do you recall our old camping trip?", ["s3"]],
+    ["还记得那回一起排队的事吗", []],
+    ["Do you remember that day together?", []],
+    ["今晚一起露营不", []],
+  ] as const) {
+    assert.deepEqual(
+      selectStyleExamples(profile, query).map(({ id }) => id),
+      ids,
+      query,
+    );
+  }
+});
+
+test("contrasting what was asked and what was answered is conversational clarification", () => {
+  const profile = distillPlayStyle(
+    persona(
+      [
+        "朋友：没看懂你上一句\n我：我没说清",
+        "朋友：一起去买菜吗\n我：行啊",
+        "朋友：I don't get what you said\n我：let me put that differently",
+      ].join("\n\n"),
+    ),
+  );
+  for (const query of [
+    "我问的是价格，你怎么答起重量了",
+    "我刚才说上午，你却回我晚上",
+    "你是不是把八点说成十点了",
+    "不是北门，我说的是南门",
+    "我说的是数量，而不是颜色",
+    "I asked about cost, but you answered about weight",
+    "I said the north gate, not the south gate",
+    "You said afternoon before, but now you are saying evening",
+  ]) {
+    assert.equal(classifyPlayStyleScene(query), "clarification", query);
+    assert.deepEqual(
+      selectStyleExamples(profile, query).map(({ id }) => id),
+      /[\u4e00-\u9fff]/u.test(query) ? ["s1"] : ["s3"],
+      query,
+    );
+  }
+});
+
+test("ordinary questions, prospective reminders and real invitations retain their intent", () => {
+  for (const query of [
+    "我问你怎么去车站",
+    "我问一下，你怎么知道的",
+    "你觉得这条线路怎么样",
+    "How do people remember names?",
+    "怎样才能记得更多单词",
+  ]) {
+    assert.notEqual(classifyPlayStyleScene(query), "clarification", query);
+    assert.notEqual(classifyPlayStyleScene(query), "recollection", query);
+  }
+  for (const query of [
+    "明天记得一起去买菜",
+    "记得下周一起吃饭",
+    "Remember to join us for lunch tomorrow",
+    "要不要一起去看电影",
+  ])
+    assert.equal(classifyPlayStyleScene(query), "invitation", query);
+});
+
+test("whole-message casual check-ins use greetings without swallowing specific activity questions", () => {
+  const profile = distillPlayStyle(
+    persona(
+      ["朋友：在吗\n我：在 咋啦", "朋友：hello\n我：hey what's up"].join(
+        "\n\n",
+      ),
+    ),
+  );
+  for (const query of [
+    "哟，在忙什么呢？",
+    "你现在在干啥",
+    "忙啥呀",
+    "What are you up to?",
+    "Hey, what are you doing right now?",
+  ]) {
+    assert.equal(classifyPlayStyleScene(query), "greeting", query);
+    assert.deepEqual(
+      selectStyleExamples(profile, query).map(({ id }) => id),
+      /[\u4e00-\u9fff]/u.test(query) ? ["s1"] : ["s2"],
+      query,
+    );
+  }
+  for (const query of [
+    "你在做什么项目",
+    "你现在在看什么书",
+    "What are you doing with that camera?",
+  ]) {
+    assert.notEqual(classifyPlayStyleScene(query), "greeting", query);
+    assert.deepEqual(selectStyleExamples(profile, query), [], query);
+  }
+});
+
+test("old scene labels are reinterpreted without changing frozen original evidence or its hash", () => {
+  const input = persona(
+    [
+      "朋友：还记得一起露营那次吗\n我：记得 我带了帐篷",
+      "朋友：我问的是价格，你怎么答起重量了\n我：我没说清",
+    ].join("\n\n"),
+  );
+  const original = distillPlayStyle(input);
+  const stored = {
+    ...original,
+    samples: original.samples.map((sample, index) => ({
+      ...sample,
+      scene: index === 0 ? ("invitation" as const) : ("question" as const),
+    })),
+  };
+  const before = JSON.stringify(stored);
+  const resolved = resolvePlayStyle(input, stored);
+  assert.equal(resolved.version, PLAY_STYLE_VERSION);
+  assert.equal(resolved.sourceHash, stored.sourceHash);
+  assert.deepEqual(resolved.samples, stored.samples);
+  assert.deepEqual(
+    selectStyleExamples(resolved, "还记得露营那回吗").map(({ id }) => id),
+    ["s1"],
+  );
+  assert.deepEqual(
+    selectStyleExamples(resolved, "我说的是距离，不是面积").map(({ id }) => id),
+    ["s2"],
+  );
+  assert.deepEqual(selectStyleExamples(resolved, "一起露营不"), []);
+  assert.equal(JSON.stringify(stored), before);
+});
+
 test("versioned source hashes and profile resolution invalidate edits and corrupt caches", () => {
   const input = persona("朋友：嗨\n我：来了\n朋友：嗨\n我：来了");
   const profile = distillPlayStyle(input);
